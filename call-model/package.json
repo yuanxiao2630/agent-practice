@@ -6,7 +6,9 @@
   "type": "module",
   "scripts": {
     "test": "node --test file_manage.test.ts",
-    "dev": "node index.ts"
+    "dev": "node index.ts",
+    "cli": "node index.ts",
+    "web": "node server.ts"
   },
   "keywords": [],
   "author": "",

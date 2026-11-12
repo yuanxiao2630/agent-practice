@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>迷你 Agent 控制台</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --line: #e3e6ea;
+    --text: #1f2328;
+    --muted: #6b7280;
+    --accent: #2563eb;
+    --accent-soft: #eef2ff;
+    --ok: #15803d;
+    --err: #b91c1c;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 20px;
+    background: var(--card);
+    border-bottom: 1px solid var(--line);
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  header .spacer { flex: 1; }
+  .status {
+    font-size: 12px;
+    color: var(--muted);
+    padding: 3px 10px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .status.busy { color: var(--accent); border-color: #c7d2fe; background: var(--accent-soft); }
+  button {
+    font: inherit;
+    font-size: 13px;
+    padding: 7px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--text);
+    cursor: pointer;
+  }
+  button:hover { border-color: #c9ced6; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover { background: #1d4ed8; }
+
+  main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+
+  .bubble {
+    border-radius: 12px;
+    padding: 12px 16px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .bubble.user {
+    background: var(--accent-soft);
+    border-color: #dbe4ff;
+    align-self: flex-end;
+    max-width: 80%;
+  }
+  .bubble.assistant { border-left: 3px solid var(--accent); }
+  .bubble.error { border-color: #fecaca; background: #fef2f2; color: var(--err); }
+  .label { font-size: 11px; color: var(--muted); margin-bottom: 4px; letter-spacing: .5px; }
+
+  .msg { display: flex; flex-direction: column; gap: 4px; }
+  .msg.user { align-items: flex-end; }
+  .msg.user .bubble { max-width: 80%; }
+
+  .steps {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 0 4px;
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+  .step { display: flex; gap: 8px; align-items: baseline; }
+  .step .icon { flex: none; width: 14px; text-align: center; }
+  .step .name { color: #374151; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .step .args { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .step.done .icon { color: var(--ok); }
+  .step.failed .icon { color: var(--err); }
+
+  form {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+    padding: 12px 20px 18px;
+    background: var(--card);
+    border-top: 1px solid var(--line);
+  }
+  form .inner { max-width: 880px; margin: 0 auto; width: 100%; display: flex; gap: 10px; align-items: flex-end; }
+  textarea {
+    flex: 1;
+    font: inherit;
+    resize: none;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    outline: none;
+    background: #fff;
+    color: var(--text);
+    max-height: 160px;
+    line-height: 1.5;
+  }
+  textarea:focus { border-color: #c7d2fe; box-shadow: 0 0 0 3px #eef2ff; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>迷你 Agent 控制台</h1>
+    <span id="status" class="status">就绪</span>
+    <span class="spacer"></span>
+    <button id="resetBtn" type="button">清空上下文</button>
+  </header>
+
+  <main>
+    <div class="wrap" id="log"></div>
+  </main>
+
+  <form id="form">
+    <div class="inner">
+      <textarea id="input" rows="1" placeholder="输入问题，Enter 发送，Shift + Enter 换行"></textarea>
+      <button class="primary" id="sendBtn" type="submit">发送</button>
+    </div>
+  </form>
+
+<script>
+const log = document.getElementById('log')
+const input = document.getElementById('input')
+const form = document.getElementById('form')
+const sendBtn = document.getElementById('sendBtn')
+const resetBtn = document.getElementById('resetBtn')
+const statusEl = document.getElementById('status')
+
+let busy = false
+let pendingRows = []   // 已发出但还没返回结果的工具调用
+let turnSteps = null   // 本轮的步骤容器
+
+const scrollDown = () => { const m = document.querySelector('main'); m.scrollTop = m.scrollHeight }
+const setStatus = (text, isBusy = false) => {
+  statusEl.textContent = text
+  statusEl.classList.toggle('busy', isBusy)
+}
+
+function el(tag, cls, text) {
+  const node = document.createElement(tag)
+  if (cls) node.className = cls
+  if (text !== undefined) node.textContent = text
+  return node
+}
+
+function addBubble(role, text) {
+  const wrap = el('div', 'msg ' + role)
+  wrap.appendChild(el('div', 'label', role === 'user' ? '你' : role === 'assistant' ? 'Agent' : '错误'))
+  wrap.appendChild(el('div', 'bubble ' + role, text))
+  log.appendChild(wrap)
+  scrollDown()
+  return wrap
+}
+
+function ensureSteps() {
+  if (!turnSteps) { turnSteps = el('div', 'steps'); log.appendChild(turnSteps) }
+  return turnSteps
+}
+
+function compact(value) {
+  let s
+  try { s = typeof value === 'string' ? value : JSON.stringify(value) } catch { s = String(value) }
+  if (!s) s = ''
+  return s.length > 90 ? s.slice(0, 90) + '…' : s
+}
+
+function addStep(name, args) {
+  const row = el('div', 'step')
+  row.appendChild(el('span', 'icon', '⋯'))
+  const nameEl = el('span', 'name', name)
+  const argsEl = el('span', 'args', compact(args))
+  const rest = el('span')
+  rest.appendChild(nameEl)
+  rest.appendChild(document.createTextNode(' '))
+  rest.appendChild(argsEl)
+  rest.style.display = 'flex'
+  rest.style.gap = '6px'
+  rest.style.minWidth = '0'
+  row.appendChild(rest)
+  ensureSteps().appendChild(row)
+  pendingRows.push({ name, row })
+  scrollDown()
+}
+
+function finishStep(name, content) {
+  const i = pendingRows.findIndex((p) => p.name === name)
+  const item = i >= 0 ? pendingRows.splice(i, 1)[0] : null
+  if (!item) return
+  const ok = !content.startsWith('{"error"')
+  item.row.classList.add(ok ? 'done' : 'failed')
+  item.row.querySelector('.icon').textContent = ok ? '✓' : '✗'
+  const argsEl = item.row.querySelector('.args')
+  argsEl.textContent = ok ? `返回 ${content.length} 字符` : compact(content)
+  scrollDown()
+}
+
+function handleEvent(evt) {
+  if (evt.type === 'round') {
+    setStatus(`第 ${evt.round} 轮`, true)
+  } else if (evt.type === 'tool_start') {
+    addStep(evt.name, evt.args)
+  } else if (evt.type === 'tool_end') {
+    finishStep(evt.name, evt.content)
+  } else if (evt.type === 'final') {
+    addBubble('assistant', evt.content || '（模型没有返回内容）')
+    setStatus('就绪')
+  } else if (evt.type === 'error') {
+    addBubble('error', evt.message)
+    setStatus('出错')
+  }
+}
+
+async function send(text) {
+  busy = true
+  sendBtn.disabled = true
+  input.disabled = true
+  pendingRows = []
+  turnSteps = null
+  addBubble('user', text)
+  setStatus('思考中…', true)
+
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message: text }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      addBubble('error', data.error || `HTTP ${res.status}`)
+      setStatus('出错')
+      return
+    }
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      let idx
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const raw = buf.slice(0, idx).trim()
+        buf = buf.slice(idx + 2)
+        if (!raw.startsWith('data:')) continue
+        const payload = raw.slice(5).trim()
+        if (payload === '[DONE]') continue
+        try { handleEvent(JSON.parse(payload)) } catch { /* 忽略异常行 */ }
+      }
+    }
+  } catch (err) {
+    addBubble('error', String(err && err.message ? err.message : err))
+    setStatus('出错')
+  } finally {
+    busy = false
+    sendBtn.disabled = false
+    input.disabled = false
+    input.focus()
+    if (statusEl.textContent === '思考中…') setStatus('就绪')
+  }
+}
+
+form.addEventListener('submit', (e) => {
+  e.preventDefault()
+  if (busy) return
+  const text = input.value.trim()
+  if (!text) return
+  input.value = ''
+  autoGrow()
+  send(text)
+})
+
+input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault()
+    form.requestSubmit()
+  }
+})
+
+function autoGrow() {
+  input.style.height = 'auto'
+  input.style.height = Math.min(input.scrollHeight, 160) + 'px'
+}
+input.addEventListener('input', autoGrow)
+
+resetBtn.addEventListener('click', async () => {
+  if (busy) return
+  await fetch('/api/reset', { method: 'POST' }).catch(() => {})
+  log.innerHTML = ''
+  pendingRows = []
+  turnSteps = null
+  setStatus('就绪')
+})
+
+// 打开页面时恢复服务端已有的上下文
+;(async () => {
+  try {
+    const res = await fetch('/api/history')
+    const data = await res.json()
+    for (const m of data.messages || []) {
+      if (m.role === 'user' || (m.role === 'assistant' && m.content)) addBubble(m.role, m.content)
+    }
+  } catch { /* 忽略 */ }
+  input.focus()
+})()
+</script>
+</body>
+</html>
