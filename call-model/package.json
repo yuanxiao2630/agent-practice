@@ -1,14 +1,14 @@
 {
   "name": "call-model",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "一个跑在本地的小 agent：终端或网页输入问题，模型通过工具查看当前仓库",
+  "main": "server.ts",
   "type": "module",
   "scripts": {
-    "test": "node --test file_manage.test.ts",
-    "dev": "node index.ts",
-    "cli": "node index.ts",
-    "web": "node server.ts"
+    "start": "node server.ts",
+    "web": "node server.ts",
+    "cli": "node cli.ts",
+    "test": "node --test workspaceTools.test.ts"
   },
   "keywords": [],
   "author": "",
