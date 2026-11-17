@@ -37,7 +37,7 @@ const server = http.createServer(async (req, res) => {
     try {
         // 1. 页面
         if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
-            const html = await fs.readFile(path.join(here, 'public', 'index.html'))
+            const html = await fs.readFile(path.join(here, '../public', 'index.html'))
             res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
             res.end(html)
             return

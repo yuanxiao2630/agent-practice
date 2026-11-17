@@ -9,6 +9,6 @@
     "noEmit": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["**/*.ts"],
+  "include": ["src/**/*.ts", "examples/**/*.ts"],
   "exclude": ["node_modules"]
 }

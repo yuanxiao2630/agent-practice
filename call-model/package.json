@@ -5,11 +5,12 @@
   "main": "server.ts",
   "type": "module",
   "scripts": {
-    "start": "node server.ts",
-    "web": "node server.ts",
-    "cli": "node cli.ts",
-    "test": "node --test workspaceTools.test.ts",
-    "apiTest": "node test.ts"
+    "agent": "node src/agent.ts",
+    "start": "node src/server.ts",
+    "cli": "node src/cli.ts",
+    "test": "node --test src/*.test.ts",
+    "example": "node examples/*.ts",
+    "example:http": "node examples/http-practice.ts"
   },
   "keywords": [],
   "author": "",

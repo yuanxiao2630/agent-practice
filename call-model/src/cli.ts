@@ -1,9 +1,3 @@
-/**
- * 终端模式：运行后在终端输入问题、回车发送。
- *   npm run cli        （或 node cli.ts）
- * 命令：/reset 清空上下文，/exit 退出
- * 网页模式见 server.ts（npm run web）
- */
 import readline from 'node:readline/promises'
 import { stdin as input, stdout as output } from 'node:process'
 import { createMessages, runAgent, MAX_ROUNDS } from './agent.ts'
