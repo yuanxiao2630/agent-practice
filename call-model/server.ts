@@ -1,8 +1,3 @@
-/**
- * 网页模式：起一个本地小服务，浏览器里输入问题，服务端把内容塞进 user 消息。
- *   npm run web        默认 http://127.0.0.1:3000
- *   PORT=4000 npm run web
- */
 import http from 'node:http'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -16,7 +11,7 @@ const HOST = '127.0.0.1'
 
 // 单用户本地练习，一份全局上下文就够了（多轮对话会保留工具调用过程）
 const messages = createMessages()
-let busy = false
+let busy = false // 进程级互斥锁，防止多处同时修改 message 字段
 
 function sendJson(res: http.ServerResponse, status: number, data: unknown) {
     const body = JSON.stringify(data)
@@ -24,8 +19,9 @@ function sendJson(res: http.ServerResponse, status: number, data: unknown) {
     res.end(body)
 }
 
-async function readJsonBody(req: http.IncomingMessage): Promise<any> {
+async function readJsonBody(req: http.IncomingMessage): Promise<any> {    
     const chunks: Buffer[] = []
+    // 底层就是自动监听 `end`：循环在 `end` 到来时自动结束。
     for await (const chunk of req) {
         chunks.push(chunk as Buffer)
         // 防止误传超大 body

@@ -11,7 +11,7 @@ const openai = new OpenAI({
 // 最多允许几轮「模型 -> 工具 -> 模型」，到顶后强制总结作答
 export const MAX_ROUNDS = Number(process.env['MAX_ROUNDS'] ?? 10)
 
-const DEBUG = process.env['DEBUG'] === '1'
+// const DEBUG = process.env['DEBUG'] === '1'
 
 const MODEL = 'deepseek-flash'
 
@@ -36,7 +36,6 @@ const FINAL_ANSWER_PROMPT = `已达到最大工具调用轮次（${MAX_ROUNDS} �
 2. 只使用你确实读到的内容，不要臆测；
 3. 如果某个问题因轮次用尽没能查证，明确写出「未能确认」。`
 
-/** 一个空对话（只有 system 提示词） */
 export function createMessages(): ChatMessage[] {
     return [{ role: 'system', content: SYSTEM_PROMPT }]
 }
@@ -76,7 +75,7 @@ export async function runAgent(messages: ChatMessage[], emit: Emit = () => {}): 
             stream: false,
         })
 
-        if (DEBUG) console.log(`Round ${count}`, JSON.stringify(completion))
+        console.log(`Round ${count}`, JSON.stringify(completion))
 
         // message / finish_reason 都在 choices[0] 里，choices 是数组
         const choice = completion.choices[0]
@@ -126,8 +125,11 @@ export async function runAgent(messages: ChatMessage[], emit: Emit = () => {}): 
 
         // stop / length / content_filter 等：结束本轮，把模型的话当作最终回答
         const content = message.content ?? ''
+
         messages.push({ role: 'assistant', content })
+
         if (finish_reason !== 'stop') console.warn('模型没有调用工具，finish_reason =', finish_reason)
+
         emit({ type: 'final', rounds: count, content })
         return content
     }

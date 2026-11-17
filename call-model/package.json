@@ -8,7 +8,8 @@
     "start": "node server.ts",
     "web": "node server.ts",
     "cli": "node cli.ts",
-    "test": "node --test workspaceTools.test.ts"
+    "test": "node --test workspaceTools.test.ts",
+    "apiTest": "node test.ts"
   },
   "keywords": [],
   "author": "",
