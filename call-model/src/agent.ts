@@ -15,13 +15,24 @@ export const MAX_ROUNDS = Number(process.env['MAX_ROUNDS'] ?? 10)
 
 const MODEL = 'deepseek-flash'
 
+// DeepSeek 的 thinking / reasoning_effort 是 OpenAI 兼容接口的扩展字段，
+// openai SDK 的类型里没有，包一层函数，避免每个调用点都做强转
+type DeepSeekChatParams = OpenAI.ChatCompletionCreateParamsNonStreaming & {
+    thinking?: { type: 'enabled' | 'disabled' }
+    reasoning_effort?: 'low' | 'medium' | 'high'
+}
+
+function chat(params: DeepSeekChatParams) {
+    return openai.chat.completions.create(params)
+}
+
 export type ChatMessage = any
 
 export type AgentEvent =
     | { type: 'round'; round: number, messages: ChatMessage[] }
     | { type: 'tool_start'; round: number; name: string; args: unknown }
     | { type: 'tool_end'; round: number; name: string; content: string }
-    | { type: 'final'; rounds: number; content: string }
+    | { type: 'final'; rounds: number; content: string; messages: ChatMessage[] }
     | { type: 'error'; message: string }
 
 export type Emit = (event: AgentEvent) => void
@@ -51,7 +62,7 @@ export async function runAgent(messages: ChatMessage[], emit: Emit = () => {}): 
         // 到达最大轮次：这次请求不传 tools（模型没有任何可调用的函数），
         // 并用一条 system 指令要求它直接总结。用副本追加，不污染 messages 历史。
         if (count > MAX_ROUNDS) {
-            const finalCompletion = await openai.chat.completions.create({
+            const finalCompletion = await chat({
                 messages: [...messages, { role: "system", content: FINAL_ANSWER_PROMPT }],
                 model: MODEL,
                 thinking: { "type": "enabled" },
@@ -60,13 +71,13 @@ export async function runAgent(messages: ChatMessage[], emit: Emit = () => {}): 
             })
             const content = finalCompletion.choices[0].message.content ?? ''
             messages.push({ role: 'assistant', content })
-            emit({ type: 'final', rounds: count - 1, content })
+            emit({ type: 'final', rounds: count - 1, content, messages })
             return content
         }
 
         emit({ type: 'round', round: count,  messages })
 
-        const completion = await openai.chat.completions.create({
+        const completion = await chat({
             messages,
             tools,
             model: MODEL,
@@ -87,7 +98,7 @@ export async function runAgent(messages: ChatMessage[], emit: Emit = () => {}): 
             if (toolCalls.length === 0) {
                 const content = message.content ?? ''
                 messages.push({ role: 'assistant', content })
-                emit({ type: 'final', rounds: count, content })
+                emit({ type: 'final', rounds: count, content, messages })
                 return content
             }
 
@@ -130,7 +141,7 @@ export async function runAgent(messages: ChatMessage[], emit: Emit = () => {}): 
 
         if (finish_reason !== 'stop') console.warn('模型没有调用工具，finish_reason =', finish_reason)
 
-        emit({ type: 'final', rounds: count, content })
+        emit({ type: 'final', rounds: count, content, messages })
         return content
     }
 }

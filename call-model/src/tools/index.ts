@@ -1,7 +1,10 @@
+import type OpenAI from 'openai'
+
 export * from './file-tools.ts'
 export * from './web-seatch-tools.ts'
 
-export const tools = [
+// 标注成 SDK 的类型，否则 type: "function" 会被推断成 string，传给 create() 时类型不匹配
+export const tools: OpenAI.ChatCompletionTool[] = [
   {
     type: "function",
     function: {

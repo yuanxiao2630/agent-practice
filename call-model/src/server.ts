@@ -9,6 +9,62 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env['PORT'] ?? 3000)
 const HOST = '127.0.0.1'
 
+// Vite 构建产物。开发时页面由 Vite(:5173) 提供，这里读不到也不影响
+const WEB_DIST = path.join(here, '../web/dist')
+
+const MIME: Record<string, string> = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.mjs': 'text/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.svg': 'image/svg+xml',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.ico': 'image/x-icon',
+    '.woff2': 'font/woff2',
+}
+
+/** 托管 web/dist：命中文件就直接返回，否则回 index.html 交给前端路由 */
+async function serveWeb(pathname: string, res: http.ServerResponse) {
+    const rel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '')
+    const filePath = path.resolve(WEB_DIST, rel)
+
+    // 防目录穿越：解析后必须仍在 dist 内
+    if (!filePath.startsWith(WEB_DIST + path.sep)) {
+        res.writeHead(403)
+        res.end()
+        return
+    }
+
+    const send = async (p: string) => {
+        const data = await fs.readFile(p)
+        res.writeHead(200, {
+            'content-type': MIME[path.extname(p).toLowerCase()] ?? 'application/octet-stream',
+            'cache-control': 'no-cache',
+        })
+        res.end(data)
+    }
+
+    try {
+        await send(filePath)
+    } catch {
+        // 带扩展名的请求是静态资源，找不到就 404；
+        // 只有 / 这种前端路由才回 index.html，否则浏览器会把 HTML 当 JS 解析
+        if (path.extname(filePath)) {
+            res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('not found')
+            return
+        }
+        try {
+            await send(path.join(WEB_DIST, 'index.html'))
+        } catch {
+            res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('前端产物不存在：先运行 npm run build，或开发时访问 http://127.0.0.1:5173')
+        }
+    }
+}
+
 // 单用户本地练习，一份全局上下文就够了（多轮对话会保留工具调用过程）
 const messages = createMessages()
 let busy = false // 进程级互斥锁，防止多处同时修改 message 字段
@@ -35,12 +91,9 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? HOST}`)
 
     try {
-        // 1. 页面
-        if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
-            const html = await fs.readFile(path.join(here, '../public', 'index.html'))
-            res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-            res.end(html)
-            return
+        // 1. 页面：开发时由 Vite(:5173) 提供，这里只负责构建产物
+        if (req.method === 'GET' && !url.pathname.startsWith('/api')) {
+            return serveWeb(url.pathname, res)
         }
 
         // 2. 历史对话（只回显 user / assistant 的文本，工具过程不展示）
@@ -109,6 +162,7 @@ const server = http.createServer(async (req, res) => {
 })
 
 server.listen(PORT, HOST, () => {
-    console.log(`网页版已启动: http://${HOST}:${PORT}`)
-    console.log('在浏览器里输入问题，回车发送；Ctrl+C 停止服务')
+    console.log(`API 已启动: http://${HOST}:${PORT}`)
+    console.log('开发：先 npm run dev，然后访问 http://127.0.0.1:5173')
+    console.log('生产：先 npm run build，然后访问上面这个 API 地址')
 })

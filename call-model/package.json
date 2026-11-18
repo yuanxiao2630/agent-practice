@@ -2,11 +2,19 @@
   "name": "call-model",
   "version": "1.0.0",
   "description": "一个跑在本地的小 agent：终端或网页输入问题，模型通过工具查看当前仓库",
-  "main": "server.ts",
+  "main": "src/server.ts",
   "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
-    "agent": "node src/agent.ts",
+    "dev": "node scripts/dev.mjs",
+    "dev:server": "node --watch src/server.ts",
+    "dev:web": "vite",
+    "build": "vite build",
     "start": "node src/server.ts",
+    "typecheck": "tsc -p tsconfig.json && tsc -p web/tsconfig.json",
+    "agent": "node src/agent.ts",
     "cli": "node src/cli.ts",
     "test": "node --test src/*.test.ts",
     "example": "node examples/*.ts",
@@ -17,9 +25,16 @@
   "license": "ISC",
   "dependencies": {
     "dotenv": "^18.0.10",
-    "openai": "^7.55.0"
+    "openai": "^7.55.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@types/node": "^26.6.6"
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "^5.7.0",
+    "vite": "^7.0.0"
   }
 }
