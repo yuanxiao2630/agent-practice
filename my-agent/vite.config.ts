@@ -2,7 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({
-    // 前端源码在 web/，Vite 的 root 也指向这里；Node 服务在 src/，两边互不干扰
+    // 前端源码在 web/，Vite 的 root 也指向这里；Node 服务在 server/，两边互不干扰
     root: 'web',
     plugins: [react()],
     server: {

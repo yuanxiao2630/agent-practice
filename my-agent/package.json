@@ -1,22 +1,22 @@
 {
-  "name": "call-model",
+  "name": "my-agent",
   "version": "1.0.0",
   "description": "一个跑在本地的小 agent：终端或网页输入问题，模型通过工具查看当前仓库",
-  "main": "src/server.ts",
+  "main": "server/server.ts",
   "type": "module",
   "engines": {
     "node": ">=22.18"
   },
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "dev:server": "node --watch src/server.ts",
+    "dev:server": "node --watch server/server.ts",
     "dev:web": "vite",
     "build": "vite build",
-    "start": "node src/server.ts",
+    "start": "node server/server.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p web/tsconfig.json",
-    "agent": "node src/agent.ts",
-    "cli": "node src/cli.ts",
-    "test": "node --test src/*.test.ts",
+    "agent": "node server/agent.ts",
+    "cli": "node server/cli.ts",
+    "test": "node --test server/**/*.test.ts",
     "example": "node examples/*.ts",
     "example:http": "node examples/http-practice.ts"
   },

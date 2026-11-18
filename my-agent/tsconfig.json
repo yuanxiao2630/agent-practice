@@ -9,6 +9,6 @@
     "noEmit": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["src/**/*.ts", "examples/**/*.ts"],
+  "include": ["server/**/*.ts", "examples/**/*.ts"],
   "exclude": ["node_modules", "web", "web/dist"]
 }

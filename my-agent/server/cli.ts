@@ -4,7 +4,7 @@ import { createMessages, runAgent, MAX_ROUNDS } from './agent.ts'
 
 async function main() {
     if (!process.env['DEEPSEEK_API_KEY']) {
-        console.error('缺少 DEEPSEEK_API_KEY，请在 call-model/.env 里配置')
+        console.error('缺少 DEEPSEEK_API_KEY，请在 my-agent/.env 里配置')
         process.exitCode = 1
         return
     }
