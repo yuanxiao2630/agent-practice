@@ -1,14 +1,14 @@
 import OpenAI from "openai"
 import 'dotenv/config'
-import { tools } from './workspaceToolSchemas.ts'
-import { listWorkspaceEntries, readFileContent, findFunctionLine } from './workspaceTools.ts'
+import { tools } from './tools/index.ts'
+import { listWorkspaceEntries, readFileContent, findFunctionLine } from './tools/file-tools.ts'
+import { searchWeb } from "./tools/index.ts"
 
 const openai = new OpenAI({
     baseURL: 'https://api.deepseek.com',
     apiKey: process.env['DEEPSEEK_API_KEY'],
 })
 
-// 最多允许几轮「模型 -> 工具 -> 模型」，到顶后强制总结作答
 export const MAX_ROUNDS = Number(process.env['MAX_ROUNDS'] ?? 10)
 
 // const DEBUG = process.env['DEBUG'] === '1'
@@ -18,7 +18,7 @@ const MODEL = 'deepseek-flash'
 export type ChatMessage = any
 
 export type AgentEvent =
-    | { type: 'round'; round: number }
+    | { type: 'round'; round: number, messages: ChatMessage[] }
     | { type: 'tool_start'; round: number; name: string; args: unknown }
     | { type: 'tool_end'; round: number; name: string; content: string }
     | { type: 'final'; rounds: number; content: string }
@@ -64,7 +64,7 @@ export async function runAgent(messages: ChatMessage[], emit: Emit = () => {}): 
             return content
         }
 
-        emit({ type: 'round', round: count })
+        emit({ type: 'round', round: count,  messages })
 
         const completion = await openai.chat.completions.create({
             messages,
@@ -152,6 +152,8 @@ async function useFun(fun: string, arg: Record<string, any>) {
             return readFileContent(arg.filePath)
         case 'findFunctionLine':
             return findFunctionLine(arg.filePath, arg.funcName)
+        case 'searchWeb':
+            return searchWeb(arg.query)
         default:
             throw new Error(`未知工具: ${fun}`)
     }

@@ -1,3 +1,6 @@
+export * from './file-tools.ts'
+export * from './web-seatch-tools.ts'
+
 export const tools = [
   {
     type: "function",
@@ -39,6 +42,21 @@ export const tools = [
         type: "object",
         properties: {},
         required: [],
+        additionalProperties: false
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "searchWeb",
+      description: "当需要联网搜索时，调用这个工具",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "要搜索的内容"}
+        },
+        required: ["query"],
         additionalProperties: false
       }
     }

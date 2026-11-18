@@ -7,7 +7,7 @@ import {
   findFunctionLine,
   listWorkspaceEntries,
   readFileContent,
-} from "./workspaceTools.ts";
+} from "./file-tools.ts";
 
 // 每个测试使用自己的临时目录，结束后自动清理。
 async function createWorkspace(t: TestContext): Promise<string> {
