@@ -3,6 +3,7 @@ import 'dotenv/config'
 import { tools } from './tools/index.ts'
 import { listWorkspaceEntries, readFileContent, findFunctionLine } from './tools/file-tools.ts'
 import { searchWeb } from "./tools/index.ts"
+import { mcpTools, callMcpTool } from "./mcp/index.ts"
 
 const openai = new OpenAI({
     baseURL: 'https://api.deepseek.com',
@@ -34,6 +35,7 @@ export type AgentEvent =
     | { type: 'tool_end'; round: number; name: string; content: string }
     | { type: 'final'; rounds: number; content: string; messages: ChatMessage[] }
     | { type: 'error'; message: string }
+    | { type: 'tools', tools: any[] }
 
 export type Emit = (event: AgentEvent) => void
 
@@ -58,6 +60,8 @@ export function createMessages(): ChatMessage[] {
 export async function runAgent(messages: ChatMessage[], emit: Emit = () => {}): Promise<string> {
     let count = 1
 
+    emit({ type: 'tools', tools: [...tools, ...mcpTools()] })
+
     while (true) {
         // 到达最大轮次：这次请求不传 tools（模型没有任何可调用的函数），
         // 并用一条 system 指令要求它直接总结。用副本追加，不污染 messages 历史。
@@ -79,7 +83,7 @@ export async function runAgent(messages: ChatMessage[], emit: Emit = () => {}): 
 
         const completion = await chat({
             messages,
-            tools,
+            tools: [...tools, ...mcpTools()],
             model: MODEL,
             thinking: { "type": "enabled" },
             reasoning_effort: "high",
@@ -166,6 +170,7 @@ async function useFun(fun: string, arg: Record<string, any>) {
         case 'searchWeb':
             return searchWeb(arg.query)
         default:
+            if (fun.startsWith('maps_')) return callMcpTool(fun, arg)
             throw new Error(`未知工具: ${fun}`)
     }
 }

@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createMessages, runAgent } from './agent.ts'
 import type { AgentEvent } from './agent.ts'
+import { initMcp, closeMcp } from './mcp/index.ts'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env['PORT'] ?? 3000)
@@ -64,6 +65,11 @@ async function serveWeb(pathname: string, res: http.ServerResponse) {
         }
     }
 }
+
+// server.ts（常驻进程）
+await initMcp()
+process.on('SIGINT',  () => closeMcp().finally(() => process.exit(0)))
+process.on('SIGTERM', () => closeMcp().finally(() => process.exit(0)))
 
 // 单用户本地练习，一份全局上下文就够了（多轮对话会保留工具调用过程）
 const messages = createMessages()
