@@ -25,6 +25,16 @@ export type RoundSnapshot = {
     messages: ChatMessage[]
 }
 
+export type ToolSource = 'builtin' | 'mcp'
+
+/** /api/tools 返回的单个工具（含开关状态） */
+export type ToolInfo = {
+    name: string
+    description: string
+    source: ToolSource
+    enabled: boolean
+}
+
 export type StepStatus = 'pending' | 'done' | 'failed'
 
 export type Step = {

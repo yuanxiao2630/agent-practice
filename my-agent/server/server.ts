@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { createMessages, runAgent } from './agent.ts'
 import type { AgentEvent } from './agent.ts'
 import { initMcp, closeMcp } from './mcp/index.ts'
+import { setToolEnabled, setToolsEnabledBySource, toolSnapshot } from './tools/registry.ts'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env['PORT'] ?? 3000)
@@ -112,14 +113,55 @@ const server = http.createServer(async (req, res) => {
             return sendJson(res, 200, { messages: history })
         }
 
-        // 3. 清空上下文
+        // 3. 工具面板：当前所有工具 + 开关状态
+        if (req.method === 'GET' && url.pathname === '/api/tools') {
+            return sendJson(res, 200, toolSnapshot())
+        }
+
+        // 4. 开关工具：name 传 '*' 表示全部；source 表示整个分组（如 MCP 总开关）
+        if (req.method === 'POST' && url.pathname === '/api/tools/toggle') {
+            let body: any
+            try {
+                body = await readJsonBody(req)
+            } catch (err) {
+                return sendJson(res, 400, { error: err instanceof Error ? err.message : '请求体解析失败' })
+            }
+
+            const name = typeof body?.name === 'string' ? body.name.trim() : ''
+            const rawSource = body?.source
+            const enabled = body?.enabled
+            if (typeof enabled !== 'boolean') {
+                return sendJson(res, 400, { error: 'enabled 必填' })
+            }
+            if (rawSource !== undefined && rawSource !== 'builtin' && rawSource !== 'mcp') {
+                return sendJson(res, 400, { error: 'source 只能是 builtin 或 mcp' })
+            }
+            const source = rawSource as 'builtin' | 'mcp' | undefined
+            // name 和 source 二选一，避免“看起来两个都传了但只生效一个”的歧义
+            if (Boolean(name) === Boolean(source)) {
+                return sendJson(res, 400, { error: 'name 和 source 需要且只能传一个' })
+            }
+            // 工具列表在每轮请求开始时确定，运行中切换会让同一轮前后不一致
+            if (busy) return sendJson(res, 409, { error: 'Agent 正在运行，等这一轮结束再调整工具' })
+
+            if (source) {
+                if (!setToolsEnabledBySource(source, enabled)) {
+                    return sendJson(res, 404, { error: '该分组暂无工具' })
+                }
+            } else if (!setToolEnabled(name, enabled)) {
+                return sendJson(res, 404, { error: `未知工具: ${name}` })
+            }
+            return sendJson(res, 200, toolSnapshot())
+        }
+
+        // 5. 清空上下文
         if (req.method === 'POST' && url.pathname === '/api/reset') {
             messages.length = 0
             messages.push(...createMessages())
             return sendJson(res, 200, { ok: true })
         }
 
-        // 4. 提问：SSE 流式返回「第几轮 / 调了什么工具 / 最终回答」
+        // 6. 提问：SSE 流式返回「第几轮 / 调了什么工具 / 最终回答」
         if (req.method === 'POST' && url.pathname === '/api/chat') {
             let body: any
             try {

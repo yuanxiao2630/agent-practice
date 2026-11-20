@@ -1,9 +1,9 @@
 import OpenAI from "openai"
 import 'dotenv/config'
-import { tools } from './tools/index.ts'
 import { listWorkspaceEntries, readFileContent, findFunctionLine } from './tools/file-tools.ts'
 import { searchWeb } from "./tools/index.ts"
-import { mcpTools, callMcpTool } from "./mcp/index.ts"
+import { enabledToolDefinitions, isToolEnabled } from './tools/registry.ts'
+import { callMcpTool } from "./mcp/index.ts"
 
 const openai = new OpenAI({
     baseURL: 'https://api.deepseek.com',
@@ -60,7 +60,12 @@ export function createMessages(): ChatMessage[] {
 export async function runAgent(messages: ChatMessage[], emit: Emit = () => {}): Promise<string> {
     let count = 1
 
-    emit({ type: 'tools', tools: [...tools, ...mcpTools()] })
+    // 用户在面板里关掉的工具不发给模型；全部关闭时不传 tools 字段，
+    // 避免部分 OpenAI 兼容接口把空数组当成非法参数
+    const activeTools = enabledToolDefinitions()
+    const toolsParam = activeTools.length > 0 ? { tools: activeTools } : {}
+
+    emit({ type: 'tools', tools: activeTools })
 
     while (true) {
         // 到达最大轮次：这次请求不传 tools（模型没有任何可调用的函数），
@@ -83,7 +88,7 @@ export async function runAgent(messages: ChatMessage[], emit: Emit = () => {}): 
 
         const completion = await chat({
             messages,
-            tools: [...tools, ...mcpTools()],
+            ...toolsParam,
             model: MODEL,
             thinking: { "type": "enabled" },
             reasoning_effort: "high",
@@ -159,6 +164,9 @@ function safeParse(raw: string): unknown {
 }
 
 async function useFun(fun: string, arg: Record<string, any>) {
+    // 兜底：模型上下文里可能残留上一轮的工具调用，或者别的客户端刚把它关掉
+    if (!isToolEnabled(fun)) throw new Error(`工具 ${fun} 已被关闭，请改用其它可用工具或直接回答`)
+
     switch (fun) {
         case 'listWorkspaceEntries':
             // schema 里该工具没有参数，模型只会传 {}，这里用当前工作目录兜底
