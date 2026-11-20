@@ -18,16 +18,21 @@
     "cli": "node server/cli.ts",
     "test": "node --test server/**/*.test.ts",
     "example": "node examples/*.ts",
-    "example:http": "node examples/http-practice.ts"
+    "example:http": "node examples/http-practice.ts",
+    "test:amap-http": "node server/mcp/mcp-streamable-http.ts",
+    "test:amap-stdio": "node server/mcp/amap-stdio.ts",
+    "test:amap": "node server/mcp/test-mcp-amap.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "dotenv": "^18.0.10",
     "openai": "^7.55.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
