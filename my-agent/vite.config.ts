@@ -6,8 +6,9 @@ export default defineConfig({
     root: 'web',
     plugins: [react()],
     server: {
-        // 默认会只绑 ::1，导致 http://127.0.0.1:5173 打不开；显式绑 IPv4
-        host: '127.0.0.1',
+        // 绑 0.0.0.0：房间功能要求同 WiFi 设备能打开 5173 上的页面；
+        // 只绑 127.0.0.1 的话 mDNS 广播出去别人也连不上
+        host: '0.0.0.0',
         port: 5173,
         proxy: {
             // 开发时页面在 :5173，API 在 :3000；通过代理变同源，SSE 直接透传

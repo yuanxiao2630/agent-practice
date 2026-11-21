@@ -6,10 +6,25 @@ import { createMessages, runAgent } from './agent.ts'
 import type { AgentEvent } from './agent.ts'
 import { initMcp, closeMcp } from './mcp/index.ts'
 import { setToolEnabled, setToolsEnabledBySource, toolSnapshot } from './tools/registry.ts'
+import { searchBackendInfo, setSearchBackend } from './tools/search-backend.ts'
+import {
+    emitRoomEvent,
+    getRoomSnapshot,
+    joinRoomByName,
+    leaveParticipant,
+    listRooms,
+    postMessage,
+    subscribe,
+    touchParticipant,
+} from './rooms/store.ts'
+import type { RoomEvent } from './rooms/store.ts'
+import { debugDumpRecords, listPeers, localDisplayName, startDiscovery, stopDiscovery } from './rooms/discovery.ts'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env['PORT'] ?? 3000)
-const HOST = '127.0.0.1'
+// 绑 0.0.0.0：房间功能要求同 WiFi 的其他设备能访问本机 API；
+// 这也是「局域网多用户」的前提——127.0.0.1 只允许本机，mDNS 广播出去也没用。
+const HOST = '0.0.0.0'
 
 // Vite 构建产物。开发时页面由 Vite(:5173) 提供，这里读不到也不影响
 const WEB_DIST = path.join(here, '../web/dist')
@@ -69,8 +84,8 @@ async function serveWeb(pathname: string, res: http.ServerResponse) {
 
 // server.ts（常驻进程）
 await initMcp()
-process.on('SIGINT',  () => closeMcp().finally(() => process.exit(0)))
-process.on('SIGTERM', () => closeMcp().finally(() => process.exit(0)))
+process.on('SIGINT',  () => { stopDiscovery(); closeMcp().finally(() => process.exit(0)) })
+process.on('SIGTERM', () => { stopDiscovery(); closeMcp().finally(() => process.exit(0)) })
 
 // 单用户本地练习，一份全局上下文就够了（多轮对话会保留工具调用过程）
 const messages = createMessages()
@@ -94,6 +109,15 @@ async function readJsonBody(req: http.IncomingMessage): Promise<any> {
     return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
+/** readJsonBody 的类型化包装：只接受 JSON object，字段用 unknown 再逐个校验 */
+async function readJsonObject(req: http.IncomingMessage): Promise<Record<string, unknown>> {
+    const data: unknown = await readJsonBody(req)
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        throw new Error('请求体必须是 JSON object')
+    }
+    return data as Record<string, unknown>
+}
+
 const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? HOST}`)
 
@@ -113,12 +137,36 @@ const server = http.createServer(async (req, res) => {
             return sendJson(res, 200, { messages: history })
         }
 
-        // 3. 工具面板：当前所有工具 + 开关状态
+        // 3. 工具面板：当前所有工具 + 开关状态 + 搜索后端信息
         if (req.method === 'GET' && url.pathname === '/api/tools') {
-            return sendJson(res, 200, toolSnapshot())
+            return sendJson(res, 200, { ...toolSnapshot(), searchBackend: searchBackendInfo() })
         }
 
-        // 4. 开关工具：name 传 '*' 表示全部；source 表示整个分组（如 MCP 总开关）
+        // 4. 切换 searchWeb 后端：parallel / deepseek（环境变量锁定或 Agent 运行中时拒绝）
+        if (req.method === 'POST' && url.pathname === '/api/search-backend') {
+            let body: any
+            try {
+                body = await readJsonBody(req)
+            } catch (err) {
+                return sendJson(res, 400, { error: err instanceof Error ? err.message : '请求体解析失败' })
+            }
+
+            // 先校验格式再查锁定状态：非法值 400 优先于 409，错误更直接
+            const backend = body?.backend
+            if (backend !== 'parallel' && backend !== 'deepseek') {
+                return sendJson(res, 400, { error: "backend 只能是 'parallel' 或 'deepseek'" })
+            }
+            if (searchBackendInfo().locked) {
+                return sendJson(res, 409, { error: '已由环境变量 LLM_SEARCH_PROVIDER 锁定' })
+            }
+            // 后端在每轮请求内生效，同一轮前后换后端会让结果来源不一致
+            if (busy) return sendJson(res, 409, { error: 'Agent 正在运行，等这一轮结束再调整' })
+
+            setSearchBackend(backend)
+            return sendJson(res, 200, { ...toolSnapshot(), searchBackend: searchBackendInfo() })
+        }
+
+        // 5. 开关工具：name 传 '*' 表示全部；source 表示整个分组（如 MCP 总开关）
         if (req.method === 'POST' && url.pathname === '/api/tools/toggle') {
             let body: any
             try {
@@ -154,14 +202,174 @@ const server = http.createServer(async (req, res) => {
             return sendJson(res, 200, toolSnapshot())
         }
 
-        // 5. 清空上下文
+        // ---------- 房间（局域网聊天室） ----------
+        // 设计：房间活在本进程内存里，消息走 SSE 推送 + POST 发送（与 /api/chat 同一套模式）。
+        // 参与者没有显式登录：name 存 localStorage，服务端按 name+via 记入 participants。
+
+        // 8. 房间列表
+        if (req.method === 'GET' && url.pathname === '/api/rooms') {
+            return sendJson(res, 200, { rooms: listRooms() })
+        }
+
+        // 9. 创建/加入房间：同名房间直接复用（joinRoomByName 内部做 find-or-create）
+        if (req.method === 'POST' && url.pathname === '/api/rooms') {
+            let body: Record<string, unknown>
+            try {
+                body = await readJsonObject(req)
+            } catch (err) {
+                return sendJson(res, 400, { error: err instanceof Error ? err.message : '请求体解析失败' })
+            }
+            const name = typeof body.name === 'string' ? body.name.trim() : ''
+            if (!name) return sendJson(res, 400, { error: 'name 不能为空' })
+            return sendJson(res, 200, { room: joinRoomByName(name) })
+        }
+
+        // 10. 房间详情 + 最近消息
+        // 路径形如 /api/rooms/<id> 或 /api/rooms/<id>/events|messages|join|leave
+        if (url.pathname.startsWith('/api/rooms/')) {
+            const rest = url.pathname.slice('/api/rooms/'.length)
+            const slash = rest.indexOf('/')
+            const roomId = slash >= 0 ? rest.slice(0, slash) : rest
+            const sub = slash >= 0 ? rest.slice(slash + 1) : ''
+            let decodedId: string
+            try {
+                decodedId = decodeURIComponent(roomId)
+            } catch {
+                return sendJson(res, 400, { error: '房间 id 编码非法' })
+            }
+
+            // 10a. SSE 事件流：snapshot + message/join/leave + 15s 心跳
+            if (req.method === 'GET' && sub === 'events') {
+                const snapshot = getRoomSnapshot(decodedId)
+                if (!snapshot) return sendJson(res, 404, { error: '房间不存在' })
+
+                res.writeHead(200, {
+                    'content-type': 'text/event-stream; charset=utf-8',
+                    'cache-control': 'no-cache, no-transform',
+                    connection: 'keep-alive',
+                    'x-accel-buffering': 'no',
+                })
+
+                // 订阅前先 touch：打开事件流本身就算「进入房间」；
+                // name 用 URL 参数 ?name= 传，没传就不写入参与者列表（匿名围观）
+                const who = (url.searchParams.get('name') ?? '').trim().slice(0, 30)
+                if (who) {
+                    const touch = touchParticipant(decodedId, who, 'user')
+                    if (touch?.isNew) {
+                        emitRoomEvent(decodedId, { type: 'join', participant: touch.participant })
+                    }
+                }
+
+                const send = (event: RoomEvent) => {
+                    if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`)
+                }
+                // 先发快照：房间信息 + 最近 50 条消息，前端不用再调 GET /api/rooms/:id
+                send({ type: 'snapshot', room: snapshot.room, messages: snapshot.messages })
+
+                const unsubscribe = subscribe(decodedId, send)
+                if (!unsubscribe) {
+                    res.end()
+                    return
+                }
+
+                // 心跳注释行：防止中间代理/浏览器把空闲连接掐掉
+                const heartbeat = setInterval(() => {
+                    if (!res.writableEnded) res.write(': hb\n\n')
+                }, 15_000)
+
+                res.on('close', () => {
+                    clearInterval(heartbeat)
+                    unsubscribe()
+                    // leave 事件不在这里广播：浏览器关页没有可靠钩子，
+                    // 靠 PARTICIPANT_TTL_MS 自然清理，避免「断线重连」时 leave/join 乱跳
+                })
+                return
+            }
+
+            // 10b. 显式加入/离开（agent 工具和 UI 都可以用，主要给 agent 用）
+            if (req.method === 'POST' && (sub === 'join' || sub === 'leave')) {
+                let body: Record<string, unknown>
+                try {
+                    body = await readJsonObject(req)
+                } catch (err) {
+                    return sendJson(res, 400, { error: err instanceof Error ? err.message : '请求体解析失败' })
+                }
+                const name = typeof body.name === 'string' ? body.name.trim().slice(0, 30) : ''
+                const via = body.via === 'agent' ? 'agent' : 'user'
+                if (!name) return sendJson(res, 400, { error: 'name 不能为空' })
+                if (sub === 'join') {
+                    const touch = touchParticipant(decodedId, name, via)
+                    if (!touch) return sendJson(res, 404, { error: '房间不存在' })
+                    if (touch.isNew) {
+                        emitRoomEvent(decodedId, { type: 'join', participant: touch.participant })
+                    }
+                    return sendJson(res, 200, { ok: true, participant: touch.participant })
+                }
+                const existed = leaveParticipant(decodedId, name, via)
+                if (!existed) return sendJson(res, 404, { error: '不在房间里' })
+                emitRoomEvent(decodedId, { type: 'leave', name })
+                return sendJson(res, 200, { ok: true })
+            }
+
+            // 10c. 发消息
+            if (req.method === 'POST' && sub === 'messages') {
+                let body: Record<string, unknown>
+                try {
+                    body = await readJsonObject(req)
+                } catch (err) {
+                    return sendJson(res, 400, { error: err instanceof Error ? err.message : '请求体解析失败' })
+                }
+                const text = typeof body.text === 'string' ? body.text : ''
+                if (!text.trim()) return sendJson(res, 400, { error: 'text 不能为空' })
+                const name = typeof body.name === 'string' ? body.name : undefined
+                // via 由来源决定：UI 传 user，agent 工具传 agent；body.via 仅作兜底
+                const via = body.via === 'agent' ? 'agent' : 'user'
+
+                const result = postMessage(decodedId, name, text, via)
+                if (!result) return sendJson(res, 404, { error: '房间不存在' })
+                if (result.join) {
+                    emitRoomEvent(decodedId, { type: 'join', participant: result.join })
+                }
+                return sendJson(res, 200, { ok: true, message: result.message })
+            }
+
+            // 10d. 房间信息（无 sub 或 sub 为空）
+            if (req.method === 'GET' && sub === '') {
+                const snapshot = getRoomSnapshot(decodedId)
+                if (!snapshot) return sendJson(res, 404, { error: '房间不存在' })
+                return sendJson(res, 200, snapshot)
+            }
+
+            return sendJson(res, 404, { error: 'not found' })
+        }
+
+        // 11. 发现的局域网设备：mDNS 浏览结果 + 手动输入兜底
+        if (req.method === 'GET' && url.pathname === '/api/peers') {
+            const payload: Record<string, unknown> = {
+                peers: listPeers(),
+                // 把自己也列出来：用户能看到「我自己在哪个 IP/端口」，方便手动分享给别人
+                self: {
+                    name: localDisplayName(),
+                    host: req.socket.localAddress ?? HOST,
+                    port: PORT,
+                    url: `http://${req.headers.host ?? `${HOST}:${PORT}`}/`,
+                },
+            }
+            // MDNS_DEBUG=1 时附带原始记录，排查发现问题用
+            if (process.env['MDNS_DEBUG'] === '1') {
+                payload['debug'] = debugDumpRecords()
+            }
+            return sendJson(res, 200, payload)
+        }
+
+        // 6. 清空上下文
         if (req.method === 'POST' && url.pathname === '/api/reset') {
             messages.length = 0
             messages.push(...createMessages())
             return sendJson(res, 200, { ok: true })
         }
 
-        // 6. 提问：SSE 流式返回「第几轮 / 调了什么工具 / 最终回答」
+        // 7. 提问：SSE 流式返回「第几轮 / 调了什么工具 / 最终回答」
         if (req.method === 'POST' && url.pathname === '/api/chat') {
             let body: any
             try {
@@ -213,4 +421,9 @@ server.listen(PORT, HOST, () => {
     console.log(`API 已启动: http://${HOST}:${PORT}`)
     console.log('开发：先 npm run dev，然后访问 http://127.0.0.1:5173')
     console.log('生产：先 npm run build，然后访问上面这个 API 地址')
+    console.log('局域网：同 WiFi 设备可通过 http://<本机IP>:5173（开发）或 :3000（生产）访问')
+
+    // mDNS 广播 + 浏览：告诉同 WiFi 的设备「这里有一个 my-agent 房间服务器」
+    // 广播两个端口：5173 是 Vite 开发服务器（HMR 好用），3000 是 API/静态页
+    startDiscovery(localDisplayName(), [5173, PORT])
 })
