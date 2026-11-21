@@ -352,6 +352,97 @@ main {
 }
 .bubble.user .fade { background: linear-gradient(to bottom, rgba(238, 242, 255, 0), var(--accent-soft)); }
 
+/* ---------- Markdown 回答 ---------- */
+/* 气泡默认 pre-wrap（用户输入按纯文本显示），markdown 区块要恢复成正常排版 */
+.markdown { white-space: normal; }
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+
+.markdown p { margin: 0 0 10px; }
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  margin: 18px 0 8px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.markdown h1 { font-size: 19px; }
+.markdown h2 { font-size: 17px; }
+.markdown h3 { font-size: 15.5px; }
+.markdown h4,
+.markdown h5,
+.markdown h6 { font-size: 14.5px; }
+
+.markdown ul,
+.markdown ol { margin: 0 0 10px; padding-left: 22px; }
+.markdown li { margin: 3px 0; }
+.markdown li > p { margin: 0 0 6px; }
+.markdown li > ul,
+.markdown li > ol { margin: 3px 0; }
+.markdown li.task-list-item { list-style: none; margin-left: -18px; }
+.markdown li.task-list-item input { margin-right: 7px; vertical-align: middle; }
+
+.markdown a { color: var(--accent); text-decoration: none; word-break: break-all; }
+.markdown a:hover { text-decoration: underline; }
+
+.markdown strong { font-weight: 600; }
+.markdown em { font-style: italic; }
+.markdown del { color: var(--muted); }
+
+.markdown code {
+  font-family: var(--mono);
+  font-size: .88em;
+  padding: .1em .35em;
+  border-radius: 5px;
+  background: #f1f4f8;
+  border: 1px solid #e6eaf0;
+}
+.markdown pre {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+  overflow-x: auto;
+}
+.markdown pre code {
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.markdown blockquote {
+  margin: 0 0 10px;
+  padding: 2px 0 2px 12px;
+  border-left: 3px solid #dbe4ff;
+  color: #4b5563;
+}
+
+.markdown hr { margin: 16px 0; border: none; border-top: 1px solid var(--line); }
+
+.markdown .md-table {
+  margin: 0 0 10px;
+  overflow-x: auto;
+}
+.markdown table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.markdown th,
+.markdown td {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  vertical-align: top;
+}
+.markdown th { background: #f6f8fa; font-weight: 600; }
+/* 没写对齐方式的列默认左对齐，写了 :---: 的交给 align 属性 */
+.markdown th:not([align]),
+.markdown td:not([align]) { text-align: left; }
+.markdown img { max-width: 100%; height: auto; border-radius: 6px; }
+
 /* ---------- 工具步骤 ---------- */
 .steps {
   display: flex;

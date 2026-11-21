@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import Markdown from './Markdown.tsx'
 
 const COLLAPSE_AT = 420
 
@@ -11,7 +12,9 @@ export default function AssistantBubble({ text }: { text: string }) {
         <div className="msg assistant">
             <div className="label">Agent</div>
             <div className={`bubble assistant ${long && !expanded ? 'clamped' : ''}`}>
-                <div className="bubble-text">{text}</div>
+                <div className="bubble-text markdown">
+                    <Markdown text={text} />
+                </div>
                 {long && !expanded && <div className="fade" />}
             </div>
             {long && (
