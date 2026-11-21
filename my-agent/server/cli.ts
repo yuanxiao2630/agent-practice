@@ -1,13 +1,16 @@
 import readline from 'node:readline/promises'
 import { stdin as input, stdout as output } from 'node:process'
 import { createMessages, runAgent, MAX_ROUNDS } from './agent.ts'
+import { LLM_API_KEY, LLM_BASE_URL, LLM_MODEL } from './provider.ts'
 
 async function main() {
-    if (!process.env['DEEPSEEK_API_KEY']) {
-        console.error('缺少 DEEPSEEK_API_KEY，请在 my-agent/.env 里配置')
+    if (!LLM_API_KEY) {
+        console.error('缺少 API key：在 my-agent/.env 里配置 LLM_API_KEY（或 DEEPSEEK_API_KEY）')
         process.exitCode = 1
         return
     }
+
+    console.log(`模型: ${LLM_MODEL} @ ${LLM_BASE_URL}`)
 
     const messages = createMessages()
     const rl = readline.createInterface({ input, output })

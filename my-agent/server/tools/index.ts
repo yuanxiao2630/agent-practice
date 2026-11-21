@@ -50,7 +50,7 @@ export const tools: OpenAI.ChatCompletionTool[] = [
     }
   },
   {
-    type: "function",
+    type: "function" as const,
     function: {
       name: "searchWeb",
       description: "当需要联网搜索时，调用这个工具",

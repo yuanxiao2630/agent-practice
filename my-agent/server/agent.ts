@@ -1,31 +1,22 @@
-import OpenAI from "openai"
 import 'dotenv/config'
 import { listWorkspaceEntries, readFileContent, findFunctionLine } from './tools/file-tools.ts'
 import { searchWeb } from "./tools/index.ts"
 import { enabledToolDefinitions, isToolEnabled } from './tools/registry.ts'
 import { callMcpTool } from "./mcp/index.ts"
-
-const openai = new OpenAI({
-    baseURL: 'https://api.deepseek.com',
-    apiKey: process.env['DEEPSEEK_API_KEY'],
-})
+import { chat, LLM_MODEL, LLM_SUPPORTS_THINKING } from './provider.ts'
 
 export const MAX_ROUNDS = Number(process.env['MAX_ROUNDS'] ?? 10)
 
 // const DEBUG = process.env['DEBUG'] === '1'
 
-const MODEL = 'deepseek-flash'
+const MODEL = LLM_MODEL
 
-// DeepSeek 的 thinking / reasoning_effort 是 OpenAI 兼容接口的扩展字段，
-// openai SDK 的类型里没有，包一层函数，避免每个调用点都做强转
-type DeepSeekChatParams = OpenAI.ChatCompletionCreateParamsNonStreaming & {
-    thinking?: { type: 'enabled' | 'disabled' }
-    reasoning_effort?: 'low' | 'medium' | 'high'
-}
+/** 只有 DeepSeek 系供应商才带 thinking 参数；其它供应商省略，避免接口报 400 */
+const thinkingParams = LLM_SUPPORTS_THINKING
+    ? { thinking: { type: 'enabled' as const }, reasoning_effort: 'high' as const }
+    : {}
 
-function chat(params: DeepSeekChatParams) {
-    return openai.chat.completions.create(params)
-}
+
 
 export type ChatMessage = any
 
@@ -74,8 +65,7 @@ export async function runAgent(messages: ChatMessage[], emit: Emit = () => {}): 
             const finalCompletion = await chat({
                 messages: [...messages, { role: "system", content: FINAL_ANSWER_PROMPT }],
                 model: MODEL,
-                thinking: { "type": "enabled" },
-                reasoning_effort: "high",
+                ...thinkingParams,
                 stream: false,
             })
             const content = finalCompletion.choices[0].message.content ?? ''
@@ -90,8 +80,7 @@ export async function runAgent(messages: ChatMessage[], emit: Emit = () => {}): 
             messages,
             ...toolsParam,
             model: MODEL,
-            thinking: { "type": "enabled" },
-            reasoning_effort: "high",
+            ...thinkingParams,
             stream: false,
         })
 
