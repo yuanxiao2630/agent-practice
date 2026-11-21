@@ -63,6 +63,23 @@ export const tools: OpenAI.ChatCompletionTool[] = [
         additionalProperties: false
       }
     }
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "chatRoom",
+      description: "加入/离开/发送消息/读取局域网聊天室。房间是同 WiFi 下其他人开的命名频道，你可以作为参与者进房聊天",
+      parameters: {
+        type: "object",
+        properties: {
+          room: { type: "string", description: "房间名（不存在时 join 会自动创建）" },
+          action: { type: "string", enum: ["join", "leave", "send", "read"], description: "join 加入 / leave 离开 / send 发言 / read 读历史" },
+          text: { type: "string", description: "send 时的消息内容" }
+        },
+        required: ["room", "action"],
+        additionalProperties: false
+      }
+    }
   }
 ]
 

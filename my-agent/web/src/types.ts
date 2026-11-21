@@ -75,3 +75,58 @@ export type Turn = {
     /** final 事件带回来的完整上下文；老版本后端没有该字段时退化为最后一个 round 快照 */
     finalMessages?: ChatMessage[]
 }
+
+// ---------- 房间（局域网聊天室） ----------
+
+/** GET /api/rooms 返回的房间概要 */
+export type RoomInfo = {
+    id: string
+    name: string
+    createdAt: number
+    messageCount: number
+    participants: string[]
+}
+
+/** 单条房间消息 */
+export type RoomMessage = {
+    id: string
+    name: string
+    text: string
+    via: 'user' | 'agent'
+    at: number
+}
+
+/** GET /api/rooms/:id 返回：房间信息 + 最近消息 */
+export type RoomSnapshot = {
+    room: RoomInfo
+    messages: RoomMessage[]
+}
+
+/** SSE /api/rooms/:id/events 推送的事件 */
+export type RoomEvent =
+    | { type: 'snapshot'; room: RoomInfo; messages: RoomMessage[] }
+    | { type: 'message'; message: RoomMessage }
+    | { type: 'join'; participant: { name: string; via: 'user' | 'agent' } }
+    | { type: 'leave'; name: string }
+
+/** GET /api/peers 返回的局域网设备 */
+export type Peer = {
+    name: string
+    host: string
+    port: number
+    url: string
+    lastSeen: number
+}
+
+/** 本机自检信息 */
+export type PeerSelf = {
+    name: string
+    host: string
+    port: number
+    url: string
+}
+
+export type PeersResponse = {
+    peers?: Peer[]
+    self?: PeerSelf
+}

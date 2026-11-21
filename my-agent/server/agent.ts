@@ -1,6 +1,7 @@
 import 'dotenv/config'
 import { listWorkspaceEntries, readFileContent, findFunctionLine } from './tools/file-tools.ts'
 import { searchWeb } from "./tools/index.ts"
+import { chatRoom } from './tools/chat-tools.ts'
 import { enabledToolDefinitions, isToolEnabled } from './tools/registry.ts'
 import { callMcpTool } from "./mcp/index.ts"
 import { chat, LLM_MODEL, LLM_SUPPORTS_THINKING } from './provider.ts'
@@ -166,6 +167,9 @@ async function useFun(fun: string, arg: Record<string, any>) {
             return findFunctionLine(arg.filePath, arg.funcName)
         case 'searchWeb':
             return searchWeb(arg.query)
+        case 'chatRoom':
+            // 房间工具直接操作内存 store，不走 HTTP 回环
+            return chatRoom(arg)
         default:
             if (fun.startsWith('maps_')) return callMcpTool(fun, arg)
             throw new Error(`未知工具: ${fun}`)
