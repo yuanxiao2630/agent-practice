@@ -35,6 +35,26 @@ export type ToolInfo = {
     enabled: boolean
 }
 
+/** 联网搜索后端：parallel（默认）或 deepseek */
+export type SearchBackend = 'parallel' | 'deepseek'
+
+/** /api/tools 附带的搜索后端状态 */
+export type SearchBackendInfo = {
+    backend: SearchBackend
+    /** LLM_SEARCH_PROVIDER 环境变量锁定选择时为 true，UI 需禁用切换 */
+    locked: boolean
+    deepseekAvailable: boolean
+    parallelAvailable: boolean
+}
+
+/** /api/tools、/api/tools/toggle、/api/search-backend 共用的响应结构 */
+export type ToolsResponse = {
+    tools?: ToolInfo[]
+    enabled?: number
+    total?: number
+    searchBackend?: SearchBackendInfo
+}
+
 export type StepStatus = 'pending' | 'done' | 'failed'
 
 export type Step = {
