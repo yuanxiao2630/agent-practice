@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fetchTools, toggleTools } from '../api/tools.ts'
+import { fetchTools, setSearchBackend, toggleTools } from '../api/tools.ts'
 import type { ToolToggleTarget } from '../api/tools.ts'
-import type { ToolInfo, ToolSource } from '../types.ts'
+import SearchBackendBar from './SearchBackendBar.tsx'
+import type { SearchBackend, SearchBackendInfo, ToolInfo, ToolSource } from '../types.ts'
 
 const SOURCE_LABEL: Record<ToolInfo['source'], string> = {
     builtin: '内置',
@@ -105,6 +106,8 @@ function ToolGroup({
 export default function ToolPanel({ busy }: { busy: boolean }) {
     const [open, setOpen] = useState(false)
     const [tools, setTools] = useState<ToolInfo[]>([])
+    const [searchBackend, setSearchBackendInfo] = useState<SearchBackendInfo | null>(null)
+    const [backendPending, setBackendPending] = useState(false)
     const [loading, setLoading] = useState(true)
     const [pending, setPending] = useState<string | null>(null)
     const [error, setError] = useState('')
@@ -114,7 +117,9 @@ export default function ToolPanel({ busy }: { busy: boolean }) {
         setLoading(true)
         setError('')
         try {
-            setTools(await fetchTools())
+            const payload = await fetchTools()
+            setTools(payload.tools ?? [])
+            setSearchBackendInfo(payload.searchBackend ?? null)
         } catch (err) {
             setError(err instanceof Error ? err.message : String(err))
         } finally {
@@ -150,11 +155,28 @@ export default function ToolPanel({ busy }: { busy: boolean }) {
         setPending(targetKey(target))
         setError('')
         try {
-            setTools(await toggleTools(target, enabled))
+            const payload = await toggleTools(target, enabled)
+            setTools(payload.tools ?? [])
+            if (payload.searchBackend) setSearchBackendInfo(payload.searchBackend)
         } catch (err) {
             setError(err instanceof Error ? err.message : String(err))
         } finally {
             setPending(null)
+        }
+    }
+
+    const updateBackend = async (backend: SearchBackend) => {
+        if (busy || pending || backendPending || searchBackend?.locked) return
+        setBackendPending(true)
+        setError('')
+        try {
+            const payload = await setSearchBackend(backend)
+            setTools(payload.tools ?? [])
+            if (payload.searchBackend) setSearchBackendInfo(payload.searchBackend)
+        } catch (err) {
+            setError(err instanceof Error ? err.message : String(err))
+        } finally {
+            setBackendPending(false)
         }
     }
 
@@ -215,6 +237,15 @@ export default function ToolPanel({ busy }: { busy: boolean }) {
                             </button>
                         </div>
                     </div>
+
+                    {searchBackend && (
+                        <SearchBackendBar
+                            info={searchBackend}
+                            disabled={locked}
+                            pending={backendPending}
+                            onSelect={(backend) => void updateBackend(backend)}
+                        />
+                    )}
 
                     {error && (
                         <div className="tool-error" role="alert">

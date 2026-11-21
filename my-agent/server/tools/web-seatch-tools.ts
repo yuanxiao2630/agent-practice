@@ -1,15 +1,15 @@
 import { z } from 'zod'
-import { LLM_API_KEY, LLM_PROVIDER } from '../provider.ts'
+import { LLM_API_KEY } from '../provider.ts'
 import { ParallelMcpClient } from '../mcp/parallel-mcp.ts'
+import { getSearchBackend } from './search-backend.ts'
 
 /**
  * searchWeb 的后端选择：
- *   默认走 Parallel 托管 MCP（免 key，fast 模式有速率限制）；
- *   LLM_SEARCH_PROVIDER=deepseek 时走 DeepSeek 的 /v1/tools/search（需要 DEEPSEEK/LLM key）。
+ *   parallel —— Parallel 托管 MCP（默认，免 key，fast 模式有速率限制）；
+ *   deepseek —— DeepSeek 的 /v1/tools/search（需要 DEEPSEEK/LLM key）。
+ *   后端在调用时读取（search-backend.ts），可由 /api/search-backend 运行时切换；
  *   Parallel 挂掉时自动回退 DeepSeek（仅当 key 存在）。
  */
-const SEARCH_PROVIDER = (process.env['LLM_SEARCH_PROVIDER'] ?? 'parallel').toLowerCase()
-
 const parallelClient = new ParallelMcpClient()
 let parallelReady: Promise<void> | undefined
 
@@ -78,7 +78,14 @@ const DeepSeekSearchResponse = z.object({
   }).loose()),
 }).loose()
 
+/**
+ * 原版 DeepSeek 搜索：直连 https://api.deepseek.com/v1/tools/search。
+ * key 用 LLM_API_KEY（provider.ts 里它已回退到 DEEPSEEK_API_KEY）。
+ * 与 Parallel 互为独立后端，deepseek 模式下失败不会回退 parallel。
+ */
 async function deepseekSearch(query: string, count = 5) {
+  if (!LLM_API_KEY) throw new Error('deepseek 搜索需要 LLM_API_KEY 或 DEEPSEEK_API_KEY')
+
   const res = await fetch('https://api.deepseek.com/v1/tools/search', {
     method: 'POST',
     headers: {
@@ -91,6 +98,7 @@ async function deepseekSearch(query: string, count = 5) {
   if (!res.ok) throw new Error(`search failed: HTTP ${res.status}`)
 
   const parsed = DeepSeekSearchResponse.safeParse(await res.json())
+  // 原实现会对缺失字段直接抛 TypeError；这里给出更明确的错误，语义一致
   if (!parsed.success) throw new Error('DeepSeek 搜索返回结构异常')
 
   console.log('\n\n网页搜索结果', JSON.stringify(parsed.data))
@@ -101,13 +109,14 @@ async function deepseekSearch(query: string, count = 5) {
 }
 
 export async function searchWeb(query: string): Promise<unknown> {
-  if (SEARCH_PROVIDER === 'deepseek') return deepseekSearch(query)
+  // 调用时读取后端，运行时切换立即生效；deepseek 模式是纯直连，不做 parallel 尝试
+  if (getSearchBackend() === 'deepseek') return deepseekSearch(query)
 
   try {
     return await parallelSearch(query)
   } catch (e) {
     // Parallel 不可用时回退 DeepSeek（需要 key）；都没有才抛错
-    if (LLM_PROVIDER === 'deepseek' && LLM_API_KEY) {
+    if (LLM_API_KEY) {
       console.warn('[searchWeb] Parallel 失败，回退 DeepSeek：', e instanceof Error ? e.message : e)
       return deepseekSearch(query)
     }

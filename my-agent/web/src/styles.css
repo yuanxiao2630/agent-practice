@@ -128,6 +128,55 @@ button.primary:hover:not(:disabled) { background: #1d4ed8; }
 .tool-bulk .link-btn { color: var(--accent); font-size: 11.5px; white-space: nowrap; }
 .tool-bulk .link-btn:disabled { color: #b6bcc6; cursor: not-allowed; text-decoration: none; }
 
+/* 搜索后端选择：并排两段按钮，放在工具组列表上方 */
+.search-backend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  background: #fbfcfd;
+}
+.search-backend-label {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.search-backend-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f1f4f8;
+}
+.search-backend-opt {
+  padding: 3px 12px;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.search-backend-opt:hover:not(:disabled) { color: var(--text); }
+.search-backend-opt.active {
+  background: var(--card);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .12);
+}
+.search-backend-opt.unavailable { opacity: .55; }
+.search-backend-opt:disabled { cursor: not-allowed; }
+.search-backend-hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 .tool-list { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 6px 8px; }
 
 .tool-group { padding-top: 4px; }

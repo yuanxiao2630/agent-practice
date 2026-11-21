@@ -6,6 +6,7 @@ import { createMessages, runAgent } from './agent.ts'
 import type { AgentEvent } from './agent.ts'
 import { initMcp, closeMcp } from './mcp/index.ts'
 import { setToolEnabled, setToolsEnabledBySource, toolSnapshot } from './tools/registry.ts'
+import { searchBackendInfo, setSearchBackend } from './tools/search-backend.ts'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env['PORT'] ?? 3000)
@@ -113,12 +114,36 @@ const server = http.createServer(async (req, res) => {
             return sendJson(res, 200, { messages: history })
         }
 
-        // 3. 工具面板：当前所有工具 + 开关状态
+        // 3. 工具面板：当前所有工具 + 开关状态 + 搜索后端信息
         if (req.method === 'GET' && url.pathname === '/api/tools') {
-            return sendJson(res, 200, toolSnapshot())
+            return sendJson(res, 200, { ...toolSnapshot(), searchBackend: searchBackendInfo() })
         }
 
-        // 4. 开关工具：name 传 '*' 表示全部；source 表示整个分组（如 MCP 总开关）
+        // 4. 切换 searchWeb 后端：parallel / deepseek（环境变量锁定或 Agent 运行中时拒绝）
+        if (req.method === 'POST' && url.pathname === '/api/search-backend') {
+            let body: any
+            try {
+                body = await readJsonBody(req)
+            } catch (err) {
+                return sendJson(res, 400, { error: err instanceof Error ? err.message : '请求体解析失败' })
+            }
+
+            // 先校验格式再查锁定状态：非法值 400 优先于 409，错误更直接
+            const backend = body?.backend
+            if (backend !== 'parallel' && backend !== 'deepseek') {
+                return sendJson(res, 400, { error: "backend 只能是 'parallel' 或 'deepseek'" })
+            }
+            if (searchBackendInfo().locked) {
+                return sendJson(res, 409, { error: '已由环境变量 LLM_SEARCH_PROVIDER 锁定' })
+            }
+            // 后端在每轮请求内生效，同一轮前后换后端会让结果来源不一致
+            if (busy) return sendJson(res, 409, { error: 'Agent 正在运行，等这一轮结束再调整' })
+
+            setSearchBackend(backend)
+            return sendJson(res, 200, { ...toolSnapshot(), searchBackend: searchBackendInfo() })
+        }
+
+        // 5. 开关工具：name 传 '*' 表示全部；source 表示整个分组（如 MCP 总开关）
         if (req.method === 'POST' && url.pathname === '/api/tools/toggle') {
             let body: any
             try {
@@ -154,14 +179,14 @@ const server = http.createServer(async (req, res) => {
             return sendJson(res, 200, toolSnapshot())
         }
 
-        // 5. 清空上下文
+        // 6. 清空上下文
         if (req.method === 'POST' && url.pathname === '/api/reset') {
             messages.length = 0
             messages.push(...createMessages())
             return sendJson(res, 200, { ok: true })
         }
 
-        // 6. 提问：SSE 流式返回「第几轮 / 调了什么工具 / 最终回答」
+        // 7. 提问：SSE 流式返回「第几轮 / 调了什么工具 / 最终回答」
         if (req.method === 'POST' && url.pathname === '/api/chat') {
             let body: any
             try {
