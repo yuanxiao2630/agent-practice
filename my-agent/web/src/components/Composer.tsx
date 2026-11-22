@@ -3,11 +3,15 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 export default function Composer({
     busy,
     cancelling,
+    hasWorkspace,
+    onPickWorkspace,
     onSend,
     onCancel,
 }: {
     busy: boolean
     cancelling: boolean
+    hasWorkspace: boolean
+    onPickWorkspace: () => void
     onSend: (text: string) => void
     onCancel: () => void
 }) {
@@ -44,6 +48,15 @@ export default function Composer({
                 submit()
             }}
         >
+            {!hasWorkspace && (
+                <div className="composer-note">
+                    <span>未选择工作区：仅支持普通对话，Agent 不会读取本地文件。</span>
+                    <button type="button" className="link-btn" onClick={onPickWorkspace}>
+                        ＋ 选择工作区
+                    </button>
+                </div>
+            )}
+
             <div className="inner">
                 <textarea
                     ref={ref}
@@ -53,7 +66,9 @@ export default function Composer({
                     placeholder={
                         busy
                             ? '正在生成…'
-                            : '输入问题，Enter 发送，Shift + Enter 换行'
+                            : !hasWorkspace
+                                ? '输入问题（未选择工作区，不会读取本地文件）'
+                                : '输入问题，Enter 发送，Shift + Enter 换行'
                     }
                     onChange={(e) => setValue(e.target.value)}
                     onKeyDown={(e) => {

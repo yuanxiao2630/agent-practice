@@ -59,3 +59,37 @@ export type Turn = {
     /** final 事件带回来的完整上下文；老版本后端没有该字段时退化为最后一个 round 快照 */
     finalMessages?: ChatMessage[]
 }
+
+/** 本次会话选中的仓库目录 */
+export type WorkspaceInfo = {
+    path: string
+    name: string
+}
+
+export type WorkspaceShortcut = {
+    label: string
+    path: string
+}
+
+/** /api/workspace/browse 返回的一级目录 */
+export type BrowseEntry = {
+    name: string
+    path: string
+    hidden: boolean
+    isGitRepo: boolean
+}
+
+export type BrowseResult = {
+    path: string
+    parent: string | null
+    entries: BrowseEntry[]
+    shortcuts: WorkspaceShortcut[]
+    isGitRepo: boolean
+    workspace: WorkspaceInfo | null
+}
+
+export type SelectWorkspaceResult = {
+    workspace: WorkspaceInfo
+    /** 换了不同目录：服务端已清空上下文，前端也要清空消息 */
+    reset: boolean
+}

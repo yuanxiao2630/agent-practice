@@ -58,6 +58,8 @@ export function useChat() {
     const seq = useRef(0)
     const busyRef = useRef(false) // 给并发判断用，state 在同一个 tick 里还没更新
     const abortRef = useRef<AbortController | null>(null)
+    // 切换仓库/清空上下文后，可能在途的 history 请求不能再把旧消息写回来
+    const historyIgnored = useRef(false)
 
     const [cancelling, setCancelling] = useState(false)
     const forceAbortTimer = useRef<number | undefined>(undefined)
@@ -71,7 +73,7 @@ export function useChat() {
         let alive = true
         fetchHistory()
             .then(({ messages, interrupted }) => {
-                if (!alive) return
+                if (!alive || historyIgnored.current) return
                 const restored = toTurns(messages)
                 // 刷新后也能看出「上一问被中断了」，而不是只看到一条没人回答的提问
                 const last = restored[restored.length - 1]
@@ -200,7 +202,18 @@ export function useChat() {
 
     const reset = useCallback(async () => {
         if (busyRef.current) return
+        historyIgnored.current = true
         await resetContext().catch(() => {})
+        setTurns([])
+        setStatus(EMPTY)
+    }, [])
+
+    /**
+     * 只清本地消息，不再请求 /api/reset。
+     * 用于切换/取消仓库：服务端已经重置过上下文，前端跟着清空即可。
+     */
+    const clear = useCallback(() => {
+        historyIgnored.current = true
         setTurns([])
         setStatus(EMPTY)
     }, [])
@@ -220,5 +233,5 @@ export function useChat() {
         }
     }, [cancelling])
 
-    return { turns, busy, cancelling, status, send, reset, cancel }
+    return { turns, busy, cancelling, status, send, reset, cancel, clear }
 }

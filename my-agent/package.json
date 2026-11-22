@@ -16,7 +16,7 @@
     "typecheck": "tsc -p tsconfig.json && tsc -p web/tsconfig.json",
     "agent": "node server/agent.ts",
     "cli": "node server/cli.ts",
-    "test": "node --test server/**/*.test.ts",
+    "test": "node --test \"server/**/*.test.ts\"",
     "example": "node examples/*.ts",
     "example:http": "node examples/http-practice.ts",
     "test:amap-http": "node server/mcp/mcp-streamable-http.ts",

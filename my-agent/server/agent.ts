@@ -4,6 +4,7 @@ import { listWorkspaceEntries, readFileContent, findFunctionLine } from './tools
 import { searchWeb } from "./tools/index.ts"
 import { enabledToolDefinitions, isToolEnabled } from './tools/registry.ts'
 import { callMcpTool } from "./mcp/index.ts"
+import { getWorkspace, type Workspace } from './workspace.ts'
 
 const openai = new OpenAI({
     baseURL: 'https://api.deepseek.com',
@@ -43,9 +44,18 @@ export type AgentEvent =
 
 export type Emit = (event: AgentEvent) => void
 
-const SYSTEM_PROMPT = `你是一个简洁、可靠的编程助手。
-你可以调用工具查看当前工作区：先看目录，再读文件；不要臆测文件内容，读到什么说什么。
+function buildSystemPrompt(workspace: Workspace | null): string {
+    const scope = workspace
+        ? `用户本次选择的仓库根目录是：${JSON.stringify(workspace.path)}（名称：${JSON.stringify(workspace.name)}）。
+所有文件工具都只能访问这个目录；路径一律传相对仓库根的路径，不要传绝对路径，也不要尝试用 ../ 跳出目录。`
+        : `当前没有选择工作区目录：你可以正常聊天，但不能读取任何本地文件。
+如果用户要求查看/读取本地文件，请照常调用文件工具；工具会返回「还没有选择工作区目录」的错误，把这个错误转告用户，并提醒他点击顶部的「＋ 选择仓库」。`
+
+    return `你是一个简洁、可靠的编程助手。
+${scope}
+先用 listWorkspaceEntries 看目录，再读文件；不要臆测文件内容，读到什么说什么。
 回答用中文，先给结论再给依据，涉及文件时给出路径和行号。`
+}
 
 const FINAL_ANSWER_PROMPT = `已达到最大工具调用轮次（${MAX_ROUNDS} 轮），你不能再调用任何工具。
 请直接基于上面已经拿到的工具结果，给用户一个完整、可读的最终回答：
@@ -53,8 +63,8 @@ const FINAL_ANSWER_PROMPT = `已达到最大工具调用轮次（${MAX_ROUNDS} �
 2. 只使用你确实读到的内容，不要臆测；
 3. 如果某个问题因轮次用尽没能查证，明确写出「未能确认」。`
 
-export function createMessages(): ChatMessage[] {
-    return [{ role: 'system', content: SYSTEM_PROMPT }]
+export function createMessages(workspace: Workspace | null = getWorkspace()): ChatMessage[] {
+    return [{ role: 'system', content: buildSystemPrompt(workspace) }]
 }
 
 /** 取消时统一用这个名字，别和真实异常混在一起 */
@@ -111,6 +121,10 @@ export async function runAgent(
     let count = 1
 
     if (signal?.aborted) throw signal.reason ?? abortError()
+
+    // 整个 run 都绑定开始时的仓库：即使中途有人切换目录，工具也不会串到新仓库。
+    // 没有选仓库也允许普通对话，文件工具会在执行时返回「未选择工作区」。
+    const workspace = getWorkspace()
 
     // 用户在面板里关掉的工具不发给模型；全部关闭时不传 tools 字段，
     // 避免部分 OpenAI 兼容接口把空数组当成非法参数
@@ -186,8 +200,13 @@ export async function runAgent(
                     emit({ type: 'tool_start', round: count, name: item.function.name, args: safeParse(item.function.arguments) })
                     try {
                         // 2. arguments 是 JSON 字符串，必须 parse
-                        const args = JSON.parse(item.function.arguments || '{}')
-                        const res = await useFun(item.function.name, args, signal)
+                        const args = safeObject(JSON.parse(item.function.arguments || '{}'))
+                        const res = await useFun(
+                            item.function.name,
+                            args,
+                            workspace?.path ?? null,
+                            signal,
+                        )
                         // JSON.stringify(undefined) 会得到 undefined，兜成 "null"
                         content = JSON.stringify(res) ?? 'null'
 
@@ -224,18 +243,27 @@ function safeParse(raw: string): unknown {
     }
 }
 
-async function useFun(fun: string, arg: Record<string, any>, signal?: AbortSignal) {
+function safeObject(value: unknown): Record<string, any> {
+    return value && typeof value === 'object' ? (value as Record<string, any>) : {}
+}
+
+async function useFun(
+    fun: string,
+    arg: Record<string, any>,
+    workspaceRoot: string | null,
+    signal?: AbortSignal,
+) {
     // 兜底：模型上下文里可能残留上一轮的工具调用，或者别的客户端刚把它关掉
     if (!isToolEnabled(fun)) throw new Error(`工具 ${fun} 已被关闭，请改用其它可用工具或直接回答`)
 
     switch (fun) {
         case 'listWorkspaceEntries':
-            // schema 里该工具没有参数，模型只会传 {}，这里用当前工作目录兜底
-            return listWorkspaceEntries(arg.workspaceRoot ?? process.cwd())
+            // 只允许列当前仓库内的目录；模型传什么都替换/规整成仓库内路径
+            return listWorkspaceEntries(workspaceRoot, typeof arg.path === 'string' ? arg.path : '.')
         case 'readFileContent':
-            return readFileContent(arg.filePath)
+            return readFileContent(workspaceRoot, arg.filePath)
         case 'findFunctionLine':
-            return findFunctionLine(arg.filePath, arg.funcName)
+            return findFunctionLine(workspaceRoot, arg.filePath, arg.funcName)
         case 'searchWeb':
             return searchWeb(arg.query, 5, signal)
         default:

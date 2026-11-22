@@ -6,6 +6,13 @@ import { createMessages, runAgent, abortError, isAbortError, sealToolCalls } fro
 import type { AgentEvent } from './agent.ts'
 import { initMcp, closeMcp } from './mcp/index.ts'
 import { setToolEnabled, setToolsEnabledBySource, toolSnapshot } from './tools/registry.ts'
+import {
+    browseDirectory,
+    clearWorkspace,
+    getWorkspace,
+    setWorkspace,
+    WorkspaceError,
+} from './workspace.ts'
 
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -89,6 +96,12 @@ process.on('SIGTERM', () => closeMcp().finally(() => process.exit(0)))
 // 单用户本地练习，一份全局上下文就够了（多轮对话会保留工具调用过程）
 const messages = createMessages()
 
+/** 切换/取消仓库后，旧仓库的上下文不能继续用，直接重置 */
+function resetMessages() {
+    messages.length = 0
+    messages.push(...createMessages())
+}
+
 // 「有没有在跑 / 跑的是谁 / 怎么停」放在一个值里，避免 busy 和 controller 各改各的
 type ActiveRun = { id: string; controller: AbortController }
 let active: ActiveRun | null = null
@@ -137,6 +150,62 @@ const server = http.createServer(async (req, res) => {
             return sendJson(res, 200, { messages })
         }
 
+        // 2.6 本次会话选中的仓库目录；未选择时 workspace 为 null
+        if (req.method === 'GET' && url.pathname === '/api/workspace') {
+            return sendJson(res, 200, { workspace: getWorkspace() })
+        }
+
+        // 2.7 目录浏览：给前端「＋ 选择仓库」弹窗用
+        if (req.method === 'GET' && url.pathname === '/api/workspace/browse') {
+            try {
+                const data = await browseDirectory(url.searchParams.get('path') ?? undefined)
+                return sendJson(res, 200, data)
+            } catch (err) {
+                if (err instanceof WorkspaceError) {
+                    return sendJson(res, err.status, { error: err.message })
+                }
+                throw err
+            }
+        }
+
+        // 2.8 选择仓库：成功后重置上下文，避免上一个仓库的对话串进来
+        if (req.method === 'POST' && url.pathname === '/api/workspace') {
+            if (active) return sendJson(res, 409, { error: 'Agent 正在运行，先中断再切换仓库' })
+
+            let body: any
+            try {
+                body = await readJsonBody(req)
+            } catch (err) {
+                return sendJson(res, 400, { error: err instanceof Error ? err.message : '请求体解析失败' })
+            }
+
+            if (typeof body?.path !== 'string' || !body.path.trim()) {
+                return sendJson(res, 400, { error: 'path 必填' })
+            }
+
+            try {
+                const previous = getWorkspace()
+                const workspace = await setWorkspace(body.path)
+                // 选同一个目录不算切换，不需要清空对话
+                const reset = previous?.path !== workspace.path
+                if (reset) resetMessages()
+                return sendJson(res, 200, { workspace, reset })
+            } catch (err) {
+                if (err instanceof WorkspaceError) {
+                    return sendJson(res, err.status, { error: err.message })
+                }
+                throw err
+            }
+        }
+
+        // 2.9 取消选择：回到「不允许读取任何本地文件」的状态
+        if (req.method === 'DELETE' && url.pathname === '/api/workspace') {
+            if (active) return sendJson(res, 409, { error: 'Agent 正在运行，先中断再取消仓库' })
+            clearWorkspace()
+            resetMessages()
+            return sendJson(res, 200, { workspace: null, reset: true })
+        }
+
         // 3. 工具面板：当前所有工具 + 开关状态
         if (req.method === 'GET' && url.pathname === '/api/tools') {
             return sendJson(res, 200, toolSnapshot())
@@ -181,8 +250,7 @@ const server = http.createServer(async (req, res) => {
         // 5. 清空上下文
         if (req.method === 'POST' && url.pathname === '/api/reset') {
             if (active) return sendJson(res, 409, { error: 'Agent 正在运行，先中断再清空' })
-            messages.length = 0
-            messages.push(...createMessages())
+            resetMessages()
             return sendJson(res, 200, { ok: true })
         }
 
@@ -198,6 +266,7 @@ const server = http.createServer(async (req, res) => {
             const text = String(body?.message ?? '').trim()
             if (!text) return sendJson(res, 400, { error: 'message 不能为空' })
             if (active) return sendJson(res, 409, { error: '上一个问题还在处理，请稍等' })
+            // 没选工作区也允许普通对话；文件工具执行时会返回「未选择工作区」给模型
 
             const run: ActiveRun = { id: randomUUID(), controller: new AbortController() }
             active = run
@@ -270,4 +339,5 @@ server.listen(PORT, HOST, () => {
     console.log(`API 已启动: http://${HOST}:${PORT}`)
     console.log('开发：先 npm run dev，然后访问 http://127.0.0.1:5173')
     console.log('生产：先 npm run build，然后访问上面这个 API 地址')
+    console.log('仓库：未选择（仅普通对话，文件工具会提示先选择工作区）')
 })
