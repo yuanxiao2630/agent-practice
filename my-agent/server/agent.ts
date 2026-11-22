@@ -23,8 +23,11 @@ type DeepSeekChatParams = OpenAI.ChatCompletionCreateParamsNonStreaming & {
     reasoning_effort?: 'low' | 'medium' | 'high'
 }
 
-function chat(params: DeepSeekChatParams) {
-    return openai.chat.completions.create(params)
+// const ac = new AbortController();
+// const signal = ac.signal;
+
+function chat(params: DeepSeekChatParams, signal?: AbortSignal) {
+    return openai.chat.completions.create(params, { signal })
 }
 
 export type ChatMessage = any
@@ -34,6 +37,7 @@ export type AgentEvent =
     | { type: 'tool_start'; round: number; name: string; args: unknown }
     | { type: 'tool_end'; round: number; name: string; content: string }
     | { type: 'final'; rounds: number; content: string; messages: ChatMessage[] }
+    | { type: 'aborted'; round: number; reason: string }
     | { type: 'error'; message: string }
     | { type: 'tools', tools: any[] }
 
@@ -53,12 +57,30 @@ export function createMessages(): ChatMessage[] {
     return [{ role: 'system', content: SYSTEM_PROMPT }]
 }
 
+/** 取消时统一用这个名字，别和真实异常混在一起 */
+export function abortError(message = '已中断') {
+    const err = new Error(message)
+    err.name = 'AbortError'
+    return err
+}
+export function isAbortError(err: unknown, signal?: AbortSignal): boolean {
+    if (signal?.aborted) return true
+    const e = err as { name?: string; code?: string } | null
+    return e?.name === 'AbortError' || e?.code === 'ABORT_ERR'
+}
+
 /**
  * 跑一轮完整的 agent 循环：用户消息要由调用方先 push 进 messages。
  * 会把 assistant / tool 消息追加进 messages，所以传入的数组就是对话上下文。
  */
-export async function runAgent(messages: ChatMessage[], emit: Emit = () => {}): Promise<string> {
+export async function runAgent(
+    messages: ChatMessage[],
+    emit: Emit = () => {},
+    signal?: AbortSignal
+): Promise<string> {
     let count = 1
+
+    if (signal?.aborted) throw signal.reason ?? abortError()
 
     // 用户在面板里关掉的工具不发给模型；全部关闭时不传 tools 字段，
     // 避免部分 OpenAI 兼容接口把空数组当成非法参数
@@ -68,6 +90,8 @@ export async function runAgent(messages: ChatMessage[], emit: Emit = () => {}): 
     emit({ type: 'tools', tools: activeTools })
 
     while (true) {
+        if (signal?.aborted) throw signal.reason ?? abortError()
+
         // 到达最大轮次：这次请求不传 tools（模型没有任何可调用的函数），
         // 并用一条 system 指令要求它直接总结。用副本追加，不污染 messages 历史。
         if (count > MAX_ROUNDS) {
@@ -77,7 +101,7 @@ export async function runAgent(messages: ChatMessage[], emit: Emit = () => {}): 
                 thinking: { "type": "enabled" },
                 reasoning_effort: "high",
                 stream: false,
-            })
+            }, signal)
             const content = finalCompletion.choices[0].message.content ?? ''
             messages.push({ role: 'assistant', content })
             emit({ type: 'final', rounds: count - 1, content, messages })
@@ -93,14 +117,16 @@ export async function runAgent(messages: ChatMessage[], emit: Emit = () => {}): 
             thinking: { "type": "enabled" },
             reasoning_effort: "high",
             stream: false,
-        })
+        }, signal)
 
-        console.log(`Round ${count}`, JSON.stringify(completion))
+        // console.log(`Round ${count}`, JSON.stringify(completion))
 
         // message / finish_reason 都在 choices[0] 里，choices 是数组
         const choice = completion.choices[0]
         const message = choice.message
         const finish_reason = choice.finish_reason
+
+        if (signal?.aborted) throw signal.reason ?? abortError()
 
         if (finish_reason === 'tool_calls') {
             const toolCalls = message.tool_calls ?? []
@@ -115,6 +141,9 @@ export async function runAgent(messages: ChatMessage[], emit: Emit = () => {}): 
             messages.push({ role: "assistant", content: message.content ?? "", tool_calls: message.tool_calls })
 
             for (const item of toolCalls) {
+
+                if (signal?.aborted) throw signal.reason ?? abortError()
+
                 // 每个 tool_call 都必须回一条 role: 'tool'，且 id 对上；
                 // 类型不支持 / 参数解析失败 / 工具抛错都不能跳过，
                 // 否则回执数量与 tool_calls 不匹配，下一次请求直接 400
@@ -128,9 +157,11 @@ export async function runAgent(messages: ChatMessage[], emit: Emit = () => {}): 
                     try {
                         // 2. arguments 是 JSON 字符串，必须 parse
                         const args = JSON.parse(item.function.arguments || '{}')
-                        const res = await useFun(item.function.name, args)
+                        const res = await useFun(item.function.name, args, signal)
                         // JSON.stringify(undefined) 会得到 undefined，兜成 "null"
                         content = JSON.stringify(res) ?? 'null'
+
+                        if (signal?.aborted) throw signal.reason ?? abortError()
                     } catch (e) {
                         // 把错误当结果回给模型，让它自己决定重试或换个思路
                         content = JSON.stringify({ error: e instanceof Error ? e.message : String(e) })
@@ -163,7 +194,7 @@ function safeParse(raw: string): unknown {
     }
 }
 
-async function useFun(fun: string, arg: Record<string, any>) {
+async function useFun(fun: string, arg: Record<string, any>, signal?: AbortSignal) {
     // 兜底：模型上下文里可能残留上一轮的工具调用，或者别的客户端刚把它关掉
     if (!isToolEnabled(fun)) throw new Error(`工具 ${fun} 已被关闭，请改用其它可用工具或直接回答`)
 
@@ -176,9 +207,9 @@ async function useFun(fun: string, arg: Record<string, any>) {
         case 'findFunctionLine':
             return findFunctionLine(arg.filePath, arg.funcName)
         case 'searchWeb':
-            return searchWeb(arg.query)
+            return searchWeb(arg.query, 5, signal)
         default:
-            if (fun.startsWith('maps_')) return callMcpTool(fun, arg)
+            if (fun.startsWith('maps_')) return callMcpTool(fun, arg, signal)
             throw new Error(`未知工具: ${fun}`)
     }
 }

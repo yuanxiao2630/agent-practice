@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fetchHistory, resetContext, streamChat } from '../api/chat.ts'
+import { fetchHistory, resetContext, streamChat, cancelChat } from '../api/chat.ts'
 import type { ChatMessage, Step, Turn } from '../types.ts'
 
 const EMPTY = '就绪'
@@ -39,6 +39,9 @@ export function useChat() {
     const seq = useRef(0)
     const busyRef = useRef(false) // 给并发判断用，state 在同一个 tick 里还没更新
     const abortRef = useRef<AbortController | null>(null)
+
+    const [cancelling, setCancelling] = useState(false)
+    const forceAbortTimer = useRef<number | undefined>(undefined)
 
     const patchTurn = useCallback((id: number, patch: (turn: Turn) => Turn) => {
         setTurns((prev) => prev.map((t) => (t.id === id ? patch(t) : t)))
@@ -133,6 +136,16 @@ export function useChat() {
                                 }))
                                 setStatus(EMPTY)
                                 break
+                            case 'aborted':
+                                patchTurn(id, (t) => ({
+                                    ...t,
+                                    cancelled: true,
+                                    steps: t.steps.map((s) =>
+                                        s.status === 'pending' ? { ...s, status: 'failed' as const, note: '已中断' } : s,
+                                    ),
+                                }))
+                                setStatus('已中断')
+                                break
 
                             case 'error':
                                 patchTurn(id, (t) => ({ ...t, error: event.message }))
@@ -143,12 +156,18 @@ export function useChat() {
                     controller.signal,
                 )
             } catch (err) {
-                if (!controller.signal.aborted) {
+                if (controller.signal.aborted) {
+                    // 本地先断开了，可能没收到 aborted 事件，也要标记
+                    patchTurn(id, (t) => (t.cancelled ? t : { ...t, cancelled: true }))
+                    setStatus('已中断')
+                } else {
                     const message = err instanceof Error ? err.message : String(err)
                     patchTurn(id, (t) => ({ ...t, error: message }))
                     setStatus('出错')
                 }
             } finally {
+                window.clearTimeout(forceAbortTimer.current)
+                setCancelling(false)
                 busyRef.current = false
                 abortRef.current = null
                 setBusy(false)
@@ -165,5 +184,20 @@ export function useChat() {
         setStatus(EMPTY)
     }, [])
 
-    return { turns, busy, status, send, reset }
+    const cancel = useCallback(async () => {
+        if (!busyRef.current || !abortRef.current) return
+        setCancelling(true)
+        setStatus('正在停止…')
+
+        // 兜底：3s 内服务端还没关流（工具不响应 signal），本地直接断开
+        forceAbortTimer.current = window.setTimeout(() => abortRef.current?.abort(), 3000)
+
+        try {
+            await cancelChat()
+        } catch {
+            abortRef.current?.abort()   // 接口失败也别让 UI 卡死
+        }
+    }, [])
+
+    return { turns, busy, cancelling, status, send, reset, cancel }
 }

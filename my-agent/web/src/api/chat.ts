@@ -54,3 +54,10 @@ export async function fetchHistory(): Promise<ChatMessage[]> {
 export async function resetContext(): Promise<void> {
     await fetch('/api/reset', { method: 'POST' })
 }
+
+export async function cancelChat(): Promise<boolean> {
+    const res = await fetch('/api/chat/cancel', { method: 'POST' })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json().catch(() => ({}))
+    return Boolean(data.cancelled)
+}

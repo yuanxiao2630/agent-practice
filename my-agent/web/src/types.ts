@@ -18,6 +18,7 @@ export type AgentEvent =
     | { type: 'tool_end'; round: number; name: string; content: string }
     | { type: 'final'; rounds: number; content: string; messages?: ChatMessage[] }
     | { type: 'error'; message: string }
+    | { type: 'aborted'; message: string }
 
 /** 一轮工具调用的快照：round 事件到达时把 messages 存下来 */
 export type RoundSnapshot = {
@@ -49,6 +50,7 @@ export type Turn = {
     id: number
     user: string
     steps: Step[]
+    cancelled?: boolean
     assistant?: string
     error?: string
     snapshots: RoundSnapshot[]

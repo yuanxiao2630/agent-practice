@@ -2,10 +2,11 @@ import http from 'node:http'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createMessages, runAgent } from './agent.ts'
+import { createMessages, runAgent, abortError, isAbortError } from './agent.ts'
 import type { AgentEvent } from './agent.ts'
 import { initMcp, closeMcp } from './mcp/index.ts'
 import { setToolEnabled, setToolsEnabledBySource, toolSnapshot } from './tools/registry.ts'
+
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env['PORT'] ?? 3000)
@@ -25,6 +26,19 @@ const MIME: Record<string, string> = {
     '.jpg': 'image/jpeg',
     '.ico': 'image/x-icon',
     '.woff2': 'font/woff2',
+}
+
+function randomUUID() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+
+  // version 4：第 7 字节高 4 位置为 0100
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  // variant 10xx：第 9 字节高 2 位置为 10
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+  const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 /** 托管 web/dist：命中文件就直接返回，否则回 index.html 交给前端路由 */
@@ -75,6 +89,9 @@ process.on('SIGTERM', () => closeMcp().finally(() => process.exit(0)))
 // 单用户本地练习，一份全局上下文就够了（多轮对话会保留工具调用过程）
 const messages = createMessages()
 let busy = false // 进程级互斥锁，防止多处同时修改 message 字段
+
+type ActiveRun = { id: string; controller: AbortController }
+let active: ActiveRun | null = null
 
 function sendJson(res: http.ServerResponse, status: number, data: unknown) {
     const body = JSON.stringify(data)
@@ -172,14 +189,22 @@ const server = http.createServer(async (req, res) => {
 
             const text = String(body?.message ?? '').trim()
             if (!text) return sendJson(res, 400, { error: 'message 不能为空' })
-            if (busy) return sendJson(res, 409, { error: '上一个问题还在处理，请稍等' })
+            if (active) return sendJson(res, 409, { error: '上一个问题还在处理，请稍等' })
 
-            busy = true
+            const run: ActiveRun = { id: randomUUID(), controller: new AbortController() }
+            active = run
+
+            // busy = true
             res.writeHead(200, {
                 'content-type': 'text/event-stream; charset=utf-8',
                 'cache-control': 'no-cache, no-transform',
                 connection: 'keep-alive',
                 'x-accel-buffering': 'no',
+            })
+
+            // 浏览器刷新 / 关标签 / 前端 abort：连接一断就停止本轮
+            res.on('close', () => {
+                if (!res.writableEnded) run.controller.abort(abortError('客户端断开'))
             })
 
             const emit = (event: AgentEvent) => {
@@ -190,15 +215,31 @@ const server = http.createServer(async (req, res) => {
             messages.push({ role: 'user', content: text })
 
             try {
-                await runAgent(messages, emit)
+                await runAgent(messages, emit, run.controller.signal)
             } catch (err) {
-                emit({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+                // emit({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+                if (isAbortError(err, run.controller.signal)) {
+                    const reason =
+                        (run.controller.signal.reason as Error | undefined)?.message ?? '已中断'
+                    emit({ type: 'aborted', round, reason })
+                } else {
+                    emit({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+                }
             } finally {
+                if (active?.id === run.id) active = null
                 res.write('data: [DONE]\n\n')
                 res.end()
                 busy = false
             }
             return
+        }
+
+        // 7. 中断当前这一轮（幂等：重复调用只是再 abort 一次）
+        if (req.method === 'POST' && url.pathname === '/api/chat/cancel') {
+            const run = active
+            if (!run) return sendJson(res, 200, { ok: true, cancelled: false })
+            run.controller.abort(abortError('用户中断'))
+            return sendJson(res, 200, { ok: true, cancelled: true, runId: run.id })
         }
 
         sendJson(res, 404, { error: 'not found' })

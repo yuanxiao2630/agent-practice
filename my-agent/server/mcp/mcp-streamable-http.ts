@@ -91,7 +91,7 @@ export class AmapMcpClient {
   }
 
   /** 通用调用工具 */
-  async callTool(name: string, args: Record<string, unknown>) {
+  async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal) {
     if (!this.mcpClient) throw new Error("请先调用 connect()");
     return await this.mcpClient.callTool({
       name,

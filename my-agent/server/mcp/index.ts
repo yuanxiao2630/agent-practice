@@ -25,11 +25,11 @@ export async function initMcp() {
 
 export const mcpTools = () => tools
 
-export async function callMcpTool(name: string, args: Record<string, unknown>) {
+export async function callMcpTool(name: string, args: Record<string, unknown>, signal?: AbortSignal) {
   await initMcp()
   if (!client) throw new Error(`地图工具不可用：${name}`)
   try {
-    return await client.callTool(name, args)
+    return await client.callTool(name, args, signal)
   } catch {
     // session 过期/网络抖：重连一次再试
     await client.close(); client = undefined; tools = []

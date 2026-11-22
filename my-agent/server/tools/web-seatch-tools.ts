@@ -1,4 +1,4 @@
-export async function searchWeb(query: string, count = 5) {
+export async function searchWeb(query: string, count = 5, signal) {
   const res = await fetch('https://api.deepseek.com/v1/tools/search', {
     method: 'POST',
     headers: {
@@ -6,7 +6,9 @@ export async function searchWeb(query: string, count = 5) {
       'content-type': 'application/json',
     },
     body: JSON.stringify({ query, count }),
-    signal: AbortSignal.timeout(15_000),
+    signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(15_000)])
+        : AbortSignal.timeout(15_000),
   })
   if (!res.ok) throw new Error(`search failed: HTTP ${res.status}`)
   const data = await res.json()
