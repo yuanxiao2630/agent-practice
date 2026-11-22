@@ -1,5 +1,9 @@
-import "dotenv/config";
+import { config as loadEnv } from "dotenv";
+import { fileURLToPath } from "node:url";
 import { AmapMcpClient } from "./mcp-streamable-http.ts";
+
+// 独立脚本：按文件位置加载 apps/server/.env
+loadEnv({ path: fileURLToPath(new URL("../.env", import.meta.url)) });
 
 // ========= 配置 =========
 // 必须带 import "dotenv/config"，否则 process.env.AMAP_WEB_KEY 永远是 undefined

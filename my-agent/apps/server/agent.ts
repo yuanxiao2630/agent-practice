@@ -1,10 +1,14 @@
 import OpenAI from "openai"
-import 'dotenv/config'
+import { config as loadEnv } from 'dotenv'
+import { fileURLToPath } from 'node:url'
 import { listWorkspaceEntries, readFileContent, findFunctionLine } from './tools/file-tools.ts'
 import { searchWeb } from "./tools/index.ts"
 import { enabledToolDefinitions, isToolEnabled } from './tools/registry.ts'
 import { callMcpTool } from "./mcp/index.ts"
 import { getWorkspace, type Workspace } from './workspace.ts'
+
+// .env 放在 apps/server 下：按本文件位置加载，不受启动目录影响
+loadEnv({ path: fileURLToPath(new URL('./.env', import.meta.url)) })
 
 const openai = new OpenAI({
     baseURL: 'https://api.deepseek.com',

@@ -2,8 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({
-    // 前端源码在 web/，Vite 的 root 也指向这里；Node 服务在 server/，两边互不干扰
-    root: 'web',
+    // root 由命令行的 `vite apps/web` 指定，产物落在 apps/web/dist
     plugins: [react()],
     server: {
         // 默认会只绑 ::1，导致 http://127.0.0.1:5173 打不开；显式绑 IPv4
@@ -19,7 +18,7 @@ export default defineConfig({
         },
     },
     build: {
-        // 相对 root，实际产物落在 web/dist
+        // 相对 root（apps/web），实际产物落在 apps/web/dist
         outDir: 'dist',
         emptyOutDir: true,
     },

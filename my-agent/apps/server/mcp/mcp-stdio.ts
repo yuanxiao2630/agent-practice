@@ -1,6 +1,10 @@
-import "dotenv/config";
+import { config as loadEnv } from "dotenv";
+import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+
+// 独立脚本：按文件位置加载 apps/server/.env
+loadEnv({ path: fileURLToPath(new URL("../.env", import.meta.url)) });
 
 const AMAP_WEB_KEY = process.env['AMAP_WEB_KEY'] as string;
 

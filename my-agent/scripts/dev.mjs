@@ -1,11 +1,11 @@
 import { spawn } from 'node:child_process'
 
-// 开发期两条进程：Node 只提供 /api，Vite 提供页面并代理 /api
+// 开发期两条进程：Node 只提供 /api，Vite 以 apps/web 为 root 提供页面并代理 /api
 const bin = process.platform === 'win32' ? 'vite.cmd' : 'vite'
 
 const procs = [
     spawn('node', ['--watch', 'apps/server/server.ts'], { stdio: 'inherit' }),
-    spawn(`node_modules/.bin/${bin}`, [], { stdio: 'inherit' }),
+    spawn(`node_modules/.bin/${bin}`, ['apps/web'], { stdio: 'inherit' }),
 ]
 
 let stopping = false

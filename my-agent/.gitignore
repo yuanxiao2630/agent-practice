@@ -1,6 +1,7 @@
-node_modules
+node_modules/
+dist/
+*.tsbuildinfo
 .env
 .DS_Store
-apps/web/dist
-.npm-cache
-.npm-logs
+.npm-cache/
+.npm-logs/
