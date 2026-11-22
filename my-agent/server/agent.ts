@@ -37,7 +37,7 @@ export type AgentEvent =
     | { type: 'tool_start'; round: number; name: string; args: unknown }
     | { type: 'tool_end'; round: number; name: string; content: string }
     | { type: 'final'; rounds: number; content: string; messages: ChatMessage[] }
-    | { type: 'aborted'; round: number; reason: string }
+    | { type: 'aborted'; round: number; reason: string; runId?: string }
     | { type: 'error'; message: string }
     | { type: 'tools', tools: any[] }
 

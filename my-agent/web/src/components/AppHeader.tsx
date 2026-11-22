@@ -12,7 +12,9 @@ export default function AppHeader({
     return (
         <header className="app-header">
             <h1>迷你 Agent 控制台</h1>
-            <span className={`status ${busy ? 'busy' : ''}`}>{status}</span>
+            <span className={`status ${busy ? 'busy' : status === '已中断' ? 'warn' : ''}`}>
+                {status}
+            </span>
             <span className="spacer" />
             <ToolPanel busy={busy} />
             <button type="button" onClick={onReset} disabled={busy}>

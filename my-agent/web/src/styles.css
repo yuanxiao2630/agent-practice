@@ -50,6 +50,7 @@ body {
   white-space: nowrap;
 }
 .status.busy { color: var(--accent); border-color: #c7d2fe; background: var(--accent-soft); }
+.status.warn { color: #b45309; border-color: #fde68a; background: #fffbeb; }
 
 button {
   font: inherit;
@@ -65,6 +66,8 @@ button:hover:not(:disabled) { border-color: #c9ced6; }
 button:disabled { opacity: .5; cursor: not-allowed; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 button.primary:hover:not(:disabled) { background: #1d4ed8; }
+button.danger { background: #fff; border-color: #fecaca; color: var(--err); }
+button.danger:hover:not(:disabled) { background: #fef2f2; border-color: #fca5a5; }
 
 .link-btn {
   align-self: flex-start;
@@ -333,6 +336,17 @@ main {
   max-width: 80%;
 }
 .bubble.assistant { border-left: 3px solid var(--accent); }
+.bubble.hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-style: dashed;
+  background: #fbfcfd;
+  color: var(--muted);
+  font-size: 13px;
+}
+.bubble.hint .link-btn { flex: none; }
 .bubble.error { border-color: #fecaca; background: #fef2f2; color: var(--err); }
 
 .bubble.clamped .bubble-text {
@@ -464,6 +478,8 @@ main {
 }
 .step.done .icon { color: var(--ok); }
 .step.failed .icon { color: var(--err); }
+.step.cancelled .icon { color: #9ca3af; }
+.step.cancelled .name { color: var(--muted); }
 
 /* ---------- 上下文检查器 ---------- */
 .inspector {

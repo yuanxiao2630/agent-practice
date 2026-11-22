@@ -88,8 +88,8 @@ process.on('SIGTERM', () => closeMcp().finally(() => process.exit(0)))
 
 // 单用户本地练习，一份全局上下文就够了（多轮对话会保留工具调用过程）
 const messages = createMessages()
-let busy = false // 进程级互斥锁，防止多处同时修改 message 字段
 
+// 「有没有在跑 / 跑的是谁 / 怎么停」放在一个值里，避免 busy 和 controller 各改各的
 type ActiveRun = { id: string; controller: AbortController }
 let active: ActiveRun | null = null
 
@@ -159,7 +159,7 @@ const server = http.createServer(async (req, res) => {
                 return sendJson(res, 400, { error: 'name 和 source 需要且只能传一个' })
             }
             // 工具列表在每轮请求开始时确定，运行中切换会让同一轮前后不一致
-            if (busy) return sendJson(res, 409, { error: 'Agent 正在运行，等这一轮结束再调整工具' })
+            if (active) return sendJson(res, 409, { error: 'Agent 正在运行，等这一轮结束再调整工具' })
 
             if (source) {
                 if (!setToolsEnabledBySource(source, enabled)) {
@@ -173,6 +173,7 @@ const server = http.createServer(async (req, res) => {
 
         // 5. 清空上下文
         if (req.method === 'POST' && url.pathname === '/api/reset') {
+            if (active) return sendJson(res, 409, { error: 'Agent 正在运行，先中断再清空' })
             messages.length = 0
             messages.push(...createMessages())
             return sendJson(res, 200, { ok: true })
@@ -194,7 +195,6 @@ const server = http.createServer(async (req, res) => {
             const run: ActiveRun = { id: randomUUID(), controller: new AbortController() }
             active = run
 
-            // busy = true
             res.writeHead(200, {
                 'content-type': 'text/event-stream; charset=utf-8',
                 'cache-control': 'no-cache, no-transform',
@@ -202,34 +202,45 @@ const server = http.createServer(async (req, res) => {
                 'x-accel-buffering': 'no',
             })
 
+            // 中断事件要告诉前端「停在第几轮」，顺手也给后续恢复留一个 id
+            let round = 0
+            const emit = (event: AgentEvent) => {
+                if (event.type === 'round') round = event.round
+                // 连接已断时 write 会抛，取消后服务端要能安静收尾
+                if (res.writableEnded || res.destroyed) return
+                res.write(`data: ${JSON.stringify(event)}\n\n`)
+            }
+
             // 浏览器刷新 / 关标签 / 前端 abort：连接一断就停止本轮
             res.on('close', () => {
                 if (!res.writableEnded) run.controller.abort(abortError('客户端断开'))
             })
 
-            const emit = (event: AgentEvent) => {
-                res.write(`data: ${JSON.stringify(event)}\n\n`)
-            }
-
             // 用户输入 -> user 消息（这行就是「把页面输入塞给 content」的地方）
+            const checkpoint = messages.length
             messages.push({ role: 'user', content: text })
+            let finished = false
 
             try {
                 await runAgent(messages, emit, run.controller.signal)
+                finished = true
             } catch (err) {
-                // emit({ type: 'error', message: err instanceof Error ? err.message : String(err) })
                 if (isAbortError(err, run.controller.signal)) {
                     const reason =
                         (run.controller.signal.reason as Error | undefined)?.message ?? '已中断'
-                    emit({ type: 'aborted', round, reason })
+                    emit({ type: 'aborted', round, reason, runId: run.id })
                 } else {
                     emit({ type: 'error', message: err instanceof Error ? err.message : String(err) })
                 }
             } finally {
+                // 中断/报错都要把这一轮回滚：半截 assistant(tool_calls) 留在上下文里，
+                // 下一次请求会因为缺少 tool 回执直接 400
+                if (!finished) messages.length = checkpoint
                 if (active?.id === run.id) active = null
-                res.write('data: [DONE]\n\n')
-                res.end()
-                busy = false
+                if (!res.writableEnded && !res.destroyed) {
+                    res.write('data: [DONE]\n\n')
+                    res.end()
+                }
             }
             return
         }

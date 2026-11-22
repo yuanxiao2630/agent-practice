@@ -18,7 +18,7 @@ export type AgentEvent =
     | { type: 'tool_end'; round: number; name: string; content: string }
     | { type: 'final'; rounds: number; content: string; messages?: ChatMessage[] }
     | { type: 'error'; message: string }
-    | { type: 'aborted'; message: string }
+    | { type: 'aborted'; round: number; reason: string; runId?: string }
 
 /** 一轮工具调用的快照：round 事件到达时把 messages 存下来 */
 export type RoundSnapshot = {
@@ -36,7 +36,7 @@ export type ToolInfo = {
     enabled: boolean
 }
 
-export type StepStatus = 'pending' | 'done' | 'failed'
+export type StepStatus = 'pending' | 'done' | 'failed' | 'cancelled'
 
 export type Step = {
     id: string
@@ -51,6 +51,8 @@ export type Turn = {
     user: string
     steps: Step[]
     cancelled?: boolean
+    /** 中断原因（用户中断 / 客户端断开） */
+    cancelReason?: string
     assistant?: string
     error?: string
     snapshots: RoundSnapshot[]

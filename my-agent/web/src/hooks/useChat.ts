@@ -31,6 +31,19 @@ function toTurns(messages: ChatMessage[]): Turn[] {
     return turns
 }
 
+/** 中断后的统一收敛：挂起的步骤标记成 cancelled，并记下原因 */
+function markCancelled(turn: Turn, reason?: string): Turn {
+    if (turn.cancelled && (!reason || turn.cancelReason === reason)) return turn
+    return {
+        ...turn,
+        cancelled: true,
+        cancelReason: reason ?? turn.cancelReason,
+        steps: turn.steps.map((s) =>
+            s.status === 'pending' ? { ...s, status: 'cancelled' as const, note: '已中断' } : s,
+        ),
+    }
+}
+
 export function useChat() {
     const [turns, setTurns] = useState<Turn[]>([])
     const [busy, setBusy] = useState(false)
@@ -137,13 +150,7 @@ export function useChat() {
                                 setStatus(EMPTY)
                                 break
                             case 'aborted':
-                                patchTurn(id, (t) => ({
-                                    ...t,
-                                    cancelled: true,
-                                    steps: t.steps.map((s) =>
-                                        s.status === 'pending' ? { ...s, status: 'failed' as const, note: '已中断' } : s,
-                                    ),
-                                }))
+                                patchTurn(id, (t) => markCancelled(t, event.reason))
                                 setStatus('已中断')
                                 break
 
@@ -158,7 +165,7 @@ export function useChat() {
             } catch (err) {
                 if (controller.signal.aborted) {
                     // 本地先断开了，可能没收到 aborted 事件，也要标记
-                    patchTurn(id, (t) => (t.cancelled ? t : { ...t, cancelled: true }))
+                    patchTurn(id, (t) => markCancelled(t))
                     setStatus('已中断')
                 } else {
                     const message = err instanceof Error ? err.message : String(err)
@@ -185,7 +192,7 @@ export function useChat() {
     }, [])
 
     const cancel = useCallback(async () => {
-        if (!busyRef.current || !abortRef.current) return
+        if (!busyRef.current || !abortRef.current || cancelling) return
         setCancelling(true)
         setStatus('正在停止…')
 
@@ -197,7 +204,7 @@ export function useChat() {
         } catch {
             abortRef.current?.abort()   // 接口失败也别让 UI 卡死
         }
-    }, [])
+    }, [cancelling])
 
     return { turns, busy, cancelling, status, send, reset, cancel }
 }

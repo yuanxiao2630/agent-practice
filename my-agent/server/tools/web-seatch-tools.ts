@@ -1,4 +1,4 @@
-export async function searchWeb(query: string, count = 5, signal) {
+export async function searchWeb(query: string, count = 5, signal?: AbortSignal) {
   const res = await fetch('https://api.deepseek.com/v1/tools/search', {
     method: 'POST',
     headers: {
