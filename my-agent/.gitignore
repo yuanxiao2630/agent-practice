@@ -1,6 +1,6 @@
 node_modules
 .env
 .DS_Store
-web/dist
+apps/web/dist
 .npm-cache
 .npm-logs
