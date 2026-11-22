@@ -1,26 +1,8 @@
-import { tools as builtinTools } from './index.ts'
-import { mcpTools } from '../mcp/index.ts'
+import type { ToolDefinition, ToolInfo, ToolSource } from './types.ts'
+import { builtinToolDefinitions } from './manifest.ts'
+import { mcpTools } from '../../mcp/index.ts'
 
-export type ToolSource = 'builtin' | 'mcp'
-
-export type ToolInfo = {
-    name: string
-    description: string
-    source: ToolSource
-    enabled: boolean
-}
-
-/** 内置工具与 MCP 工具最终都是这个结构 */
-export type FunctionTool = {
-    type: 'function'
-    function: {
-        name: string
-        description?: string
-        parameters?: Record<string, unknown>
-    }
-}
-
-function isFunctionTool(value: unknown): value is FunctionTool {
+function isToolDefinition(value: unknown): value is ToolDefinition {
     const fn = (value as { function?: { name?: unknown } } | null)?.function
     return typeof fn?.name === 'string'
 }
@@ -28,12 +10,17 @@ function isFunctionTool(value: unknown): value is FunctionTool {
 /** 被用户关闭的工具名：进程内状态，重启服务后回到「全部启用」 */
 const disabled = new Set<string>()
 
-function builtinFunctionTools(): FunctionTool[] {
-    return builtinTools.filter(isFunctionTool)
+function builtinTools(): ToolDefinition[] {
+    return builtinToolDefinitions.filter(isToolDefinition)
 }
 
-function mcpFunctionTools(): FunctionTool[] {
-    return mcpTools().filter(isFunctionTool)
+function mcpFunctionTools(): ToolDefinition[] {
+    return mcpTools().filter(isToolDefinition)
+}
+
+/** 内置 + MCP，按「内置在前」的固定顺序 */
+function allTools(): ToolDefinition[] {
+    return [...builtinTools(), ...mcpFunctionTools()]
 }
 
 export function isToolEnabled(name: string): boolean {
@@ -42,7 +29,7 @@ export function isToolEnabled(name: string): boolean {
 
 /** 面板展示用：不管开关，列出当前所有工具（MCP 未连接时只有内置工具） */
 export function listTools(): ToolInfo[] {
-    const toInfo = (tool: FunctionTool, source: ToolSource): ToolInfo => ({
+    const toInfo = (tool: ToolDefinition, source: ToolSource): ToolInfo => ({
         name: tool.function.name,
         description: tool.function.description ?? '',
         source,
@@ -50,21 +37,19 @@ export function listTools(): ToolInfo[] {
     })
 
     return [
-        ...builtinFunctionTools().map((t) => toInfo(t, 'builtin')),
+        ...builtinTools().map((t) => toInfo(t, 'builtin')),
         ...mcpFunctionTools().map((t) => toInfo(t, 'mcp')),
     ]
 }
 
 /** 真正发给模型的工具定义：被关闭的工具直接不传，模型就不会调用它 */
-export function enabledToolDefinitions(): FunctionTool[] {
-    return [...builtinFunctionTools(), ...mcpFunctionTools()].filter((t) =>
-        isToolEnabled(t.function.name),
-    )
+export function enabledToolDefinitions(): ToolDefinition[] {
+    return allTools().filter((t) => isToolEnabled(t.function.name))
 }
 
 /** 设置单个工具；name 传 '*' 表示全部。工具不存在时返回 false */
 export function setToolEnabled(name: string, enabled: boolean): boolean {
-    const all = [...builtinFunctionTools(), ...mcpFunctionTools()]
+    const all = allTools()
 
     if (name === '*') {
         if (enabled) disabled.clear()
@@ -80,7 +65,7 @@ export function setToolEnabled(name: string, enabled: boolean): boolean {
 
 /** 按来源整组开关，比如 MCP 总开关。该分组没有工具时返回 false */
 export function setToolsEnabledBySource(source: ToolSource, enabled: boolean): boolean {
-    const all = source === 'builtin' ? builtinFunctionTools() : mcpFunctionTools()
+    const all = source === 'builtin' ? builtinTools() : mcpFunctionTools()
     if (all.length === 0) return false
 
     for (const tool of all) {

@@ -1,15 +1,9 @@
-import { config as loadEnv } from "dotenv";
-import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-
-// 独立脚本：按文件位置加载 apps/server/.env
-loadEnv({ path: fileURLToPath(new URL("../.env", import.meta.url)) });
-
-const AMAP_WEB_KEY = process.env['AMAP_WEB_KEY'] as string;
+import { AMAP_WEB_KEY } from "../src/config/index.ts";
 
 if (!AMAP_WEB_KEY) {
-  throw new Error("缺少 AMAP_WEB_KEY：请在 my-agent/.env 中配置 AMAP_WEB_KEY=你的高德Web服务Key");
+  throw new Error("缺少 AMAP_WEB_KEY：请在 apps/server/.env 中配置 AMAP_WEB_KEY=你的高德Web服务Key");
 }
 
 const transport = new StdioClientTransport({

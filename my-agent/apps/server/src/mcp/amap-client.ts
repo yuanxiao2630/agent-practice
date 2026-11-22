@@ -1,20 +1,12 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+// 工具的形状只有一份定义，MCP 只是它的一个生产者
+import type { ToolDefinition } from "../agent/tools/types.ts";
 
 type AmapMcpOptions = {
   amapWebKey: string;
   clientName?: string;
   clientVersion?: string;
-};
-
-/** 转换后的 OpenAI function-calling 工具定义 */
-export type OpenAIToolDefinition = {
-  type: "function";
-  function: {
-    name: string;
-    description?: string;
-    parameters: Record<string, unknown>;
-  };
 };
 
 const AMAP_MCP_ENDPOINT = "https://mcp.amap.com/mcp";
@@ -70,7 +62,7 @@ export class AmapMcpClient {
     console.log("✅ Amap MCP 连接成功");
   }
 
-  async showToolList(): Promise<OpenAIToolDefinition[]> {
+  async showToolList(): Promise<ToolDefinition[]> {
     if (!this.mcpClient) throw new Error("请先调用 connect()");
 
     // 1. 查看amap暴露出来全部工具（调试用）
@@ -78,7 +70,7 @@ export class AmapMcpClient {
     console.log("可用工具：", toolsList.tools.map((t) => t.name), "\n");
 
     // 简易转换示例（给大模型用）
-    const openaiTools: OpenAIToolDefinition[] = toolsList.tools.map((t) => ({
+    const openaiTools: ToolDefinition[] = toolsList.tools.map((t) => ({
       type: "function",
       function: {
         name: t.name,

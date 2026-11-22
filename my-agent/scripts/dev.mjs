@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process'
 const bin = process.platform === 'win32' ? 'vite.cmd' : 'vite'
 
 const procs = [
-    spawn('node', ['--watch', 'apps/server/server.ts'], { stdio: 'inherit' }),
+    spawn('node', ['--watch', 'apps/server/index.ts'], { stdio: 'inherit' }),
     spawn(`node_modules/.bin/${bin}`, ['apps/web'], { stdio: 'inherit' }),
 ]
 
