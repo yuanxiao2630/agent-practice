@@ -70,6 +70,36 @@ export function isAbortError(err: unknown, signal?: AbortSignal): boolean {
 }
 
 /**
+ * 「封口」：给有 tool_calls 但缺回执的尾巴补一条 error，而不是删记录。
+ * 现场全留着（排查要看），补完后 messages 又是合法上下文（下一次请求不会 400）。
+ * 返回是否真的补了；已经是完整批次时是 no-op。
+ */
+export function sealToolCalls(msgs: ChatMessage[], reason: string): boolean {
+    // 从尾部往前：先收集已经写入的 tool 回执，再找到它们所属的 assistant
+    const answered = new Set<string>()
+    let i = msgs.length - 1
+    while (i >= 0 && msgs[i].role === 'tool') {
+        answered.add(msgs[i].tool_call_id)
+        i--
+    }
+
+    const assistant = msgs[i]
+    if (!assistant || assistant.role !== 'assistant' || !assistant.tool_calls?.length) return false
+
+    let sealed = false
+    for (const call of assistant.tool_calls) {
+        if (answered.has(call.id)) continue
+        msgs.push({
+            role: 'tool',
+            tool_call_id: call.id,
+            content: JSON.stringify({ error: reason }),
+        })
+        sealed = true
+    }
+    return sealed
+}
+
+/**
  * 跑一轮完整的 agent 循环：用户消息要由调用方先 push 进 messages。
  * 会把 assistant / tool 消息追加进 messages，所以传入的数组就是对话上下文。
  */

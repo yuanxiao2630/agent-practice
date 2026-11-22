@@ -44,11 +44,20 @@ export async function streamChat(
     }
 }
 
-export async function fetchHistory(): Promise<ChatMessage[]> {
+export type HistoryPayload = {
+    messages: ChatMessage[]
+    /** 最后一问没有答案：被中断、报错，或服务端已经忘了这轮 */
+    interrupted: boolean
+}
+
+export async function fetchHistory(): Promise<HistoryPayload> {
     const res = await fetch('/api/history')
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
-    return (data.messages ?? []) as ChatMessage[]
+    return {
+        messages: (data.messages ?? []) as ChatMessage[],
+        interrupted: Boolean(data.interrupted),
+    }
 }
 
 export async function resetContext(): Promise<void> {

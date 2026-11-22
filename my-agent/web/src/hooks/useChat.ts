@@ -21,6 +21,12 @@ function toTurns(messages: ChatMessage[]): Turn[] {
     let seq = 0
     for (const m of messages) {
         if (m.role === 'user') {
+            // 上一问还没答案就又开了一问：说明上一问被中断/报错了，标出来
+            const prev = turns[turns.length - 1]
+            if (prev && !prev.assistant) {
+                prev.cancelled = true
+                prev.cancelReason = '上次中断'
+            }
             turns.push({ id: ++seq, user: m.content ?? '', steps: [], snapshots: [] })
         } else if (m.role === 'assistant' && m.content) {
             const last = turns[turns.length - 1]
@@ -64,8 +70,16 @@ export function useChat() {
     useEffect(() => {
         let alive = true
         fetchHistory()
-            .then((messages) => {
-                if (alive) setTurns(toTurns(messages))
+            .then(({ messages, interrupted }) => {
+                if (!alive) return
+                const restored = toTurns(messages)
+                // 刷新后也能看出「上一问被中断了」，而不是只看到一条没人回答的提问
+                const last = restored[restored.length - 1]
+                if (interrupted && last) {
+                    last.cancelled = true
+                    last.cancelReason = '上次中断'
+                }
+                setTurns(restored)
             })
             .catch(() => {
                 /* 首次启动时后端可能还没起来，忽略即可 */

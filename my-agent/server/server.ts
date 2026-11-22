@@ -2,7 +2,7 @@ import http from 'node:http'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createMessages, runAgent, abortError, isAbortError } from './agent.ts'
+import { createMessages, runAgent, abortError, isAbortError, sealToolCalls } from './agent.ts'
 import type { AgentEvent } from './agent.ts'
 import { initMcp, closeMcp } from './mcp/index.ts'
 import { setToolEnabled, setToolsEnabledBySource, toolSnapshot } from './tools/registry.ts'
@@ -127,7 +127,14 @@ const server = http.createServer(async (req, res) => {
             const history = messages
                 .filter((m) => m.role === 'user' || (m.role === 'assistant' && m.content && !m.tool_calls))
                 .map((m) => ({ role: m.role, content: m.content }))
-            return sendJson(res, 200, { messages: history })
+            // 最后一条是 user 且当前没在跑：这一问没答完（被中断或报错），前端要标出来
+            const interrupted = !active && history.at(-1)?.role === 'user'
+            return sendJson(res, 200, { messages: history, interrupted })
+        }
+
+        // 2.5 排查用：直接看服务端真实的 messages（含 tool_calls、中断补的回执）
+        if (req.method === 'GET' && url.pathname === '/api/context') {
+            return sendJson(res, 200, { messages })
         }
 
         // 3. 工具面板：当前所有工具 + 开关状态
@@ -217,25 +224,23 @@ const server = http.createServer(async (req, res) => {
             })
 
             // 用户输入 -> user 消息（这行就是「把页面输入塞给 content」的地方）
-            const checkpoint = messages.length
             messages.push({ role: 'user', content: text })
-            let finished = false
 
             try {
                 await runAgent(messages, emit, run.controller.signal)
-                finished = true
             } catch (err) {
                 if (isAbortError(err, run.controller.signal)) {
                     const reason =
                         (run.controller.signal.reason as Error | undefined)?.message ?? '已中断'
+                    // 只补缺的回执，不删已有记录：这一轮留在 messages 里可查
+                    sealToolCalls(messages, `用户中断，该工具没有返回结果（${reason}）`)
                     emit({ type: 'aborted', round, reason, runId: run.id })
                 } else {
-                    emit({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+                    const message = err instanceof Error ? err.message : String(err)
+                    sealToolCalls(messages, `执行失败，该工具没有返回结果（${message}）`)
+                    emit({ type: 'error', message })
                 }
             } finally {
-                // 中断/报错都要把这一轮回滚：半截 assistant(tool_calls) 留在上下文里，
-                // 下一次请求会因为缺少 tool 回执直接 400
-                if (!finished) messages.length = checkpoint
                 if (active?.id === run.id) active = null
                 if (!res.writableEnded && !res.destroyed) {
                     res.write('data: [DONE]\n\n')

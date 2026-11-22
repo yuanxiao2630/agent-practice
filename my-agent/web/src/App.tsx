@@ -42,7 +42,7 @@ export default function App() {
                     )}
 
                     {turns.map((turn) => (
-                        <TurnView key={turn.id} turn={turn} busy={busy} onRetry={send} />
+                        <TurnView key={turn.id} turn={turn} />
                     ))}
                 </div>
             </main>
