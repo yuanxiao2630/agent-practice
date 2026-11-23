@@ -10,11 +10,15 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:server": "node --watch apps/server/index.ts",
+    "dev:express": "node --watch apps/server-express/index.ts",
     "dev:web": "vite apps/web",
     "build": "vite build apps/web",
     "start": "node apps/server/index.ts",
+    "start:express": "node apps/server-express/index.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p apps/web/tsconfig.json",
     "test": "node --test \"apps/server/**/*.test.ts\"",
+    "test:express": "node --test \"apps/server-express/**/*.test.ts\"",
+    "test:all": "npm test && npm run test:express",
     "test:amap-stdio": "node apps/server/scripts/mcp-stdio.ts",
     "test:amap": "node apps/server/scripts/mcp-amap-smoke.ts",
     "example": "node examples/*.ts",
@@ -26,6 +30,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
     "dotenv": "^18.0.10",
+    "express": "^5.3.0",
     "openai": "^7.55.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -34,6 +39,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^26.6.6",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
