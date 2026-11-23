@@ -7,6 +7,7 @@ import {
 } from '../../agent/index.ts'
 import { enabledToolDefinitions } from '../../agent/tools/index.ts'
 import type { AgentEvent, AgentEventBody } from '../../agent/types.ts'
+import { appendEvent } from '../../logging/event-log.ts'
 import {
     beginRun,
     currentRun,
@@ -36,16 +37,19 @@ export async function chatRoute({ req, res }: Ctx): Promise<void> {
     const run = beginRun(text)
     const sse = startSse(res)
 
-    // 信封统一在这里补：agent 只负责业务事件，不需要知道 taskId/seq
+    // 信封统一在这里补：agent 只负责业务事件，不需要知道 sessionId/taskId/seq
     let seq = 0
     const emit = (event: AgentEventBody) => {
         const full: AgentEvent = {
             ...event,
+            sessionId: run.task.sessionId,
             taskId: run.id,
             seq: ++seq,
             at: new Date().toISOString(),
         }
         trackEvent(run, event)
+        // 先交给日志队列，再发 SSE；写盘失败不影响对话
+        appendEvent(full)
         sse.send(full)
     }
 

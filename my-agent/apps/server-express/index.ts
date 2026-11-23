@@ -1,5 +1,6 @@
 import { DEEPSEEK_API_KEY, HOST, PORT, WEB_DIST } from './src/config/index.ts'
 import { createApp } from './src/http/app.ts'
+import { flushEventLog } from './src/logging/event-log.ts'
 import { closeMcp, initMcp } from './src/mcp/index.ts'
 
 /**
@@ -50,6 +51,7 @@ async function shutdown(signal: string): Promise<void> {
         })
     })
 
+    await flushEventLog().catch(() => {})
     await closeMcp().catch(() => {})
     process.exit(0)
 }

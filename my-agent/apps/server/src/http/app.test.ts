@@ -25,11 +25,12 @@ async function getJson(path: string) {
     return { res, data: (await res.json()) as any }
 }
 
-test('GET /api/history：返回消息数组和中断标记', async () => {
+test('GET /api/history：返回消息数组、中断标记和 sessionId', async () => {
     const { res, data } = await getJson('/api/history')
     assert.equal(res.status, 200)
     assert.ok(Array.isArray(data.messages))
     assert.equal(typeof data.interrupted, 'boolean')
+    assert.equal(typeof data.sessionId, 'string')
 })
 
 test('GET /api/context：返回真实上下文、运行状态和任务快照', async () => {
@@ -38,6 +39,7 @@ test('GET /api/context：返回真实上下文、运行状态和任务快照', a
     assert.ok(Array.isArray(data.messages))
     assert.equal(data.messages[0]?.role, 'system')
     assert.equal(typeof data.running, 'boolean')
+    assert.equal(typeof data.sessionId, 'string')
     assert.equal(data.task, null)
 })
 
@@ -103,13 +105,19 @@ test('POST /api/chat：空消息 400，非法 JSON 400', async () => {
     assert.equal(broken.status, 400)
 })
 
-test('POST /api/reset：清空后只剩 system 消息', async () => {
+test('POST /api/reset：清空后只剩 system 消息，并换新的 sessionId', async () => {
+    const before = await getJson('/api/history')
+
     const res = await fetch(`${base}/api/reset`, { method: 'POST' })
     assert.equal(res.status, 200)
+
+    const after = await getJson('/api/history')
+    assert.notEqual(after.data.sessionId, before.data.sessionId)
 
     const { data } = await getJson('/api/context')
     assert.equal(data.messages.length, 1)
     assert.equal(data.messages[0].role, 'system')
+    assert.equal(data.sessionId, after.data.sessionId)
 })
 
 test('未知路径 404，方法不对 405', async () => {

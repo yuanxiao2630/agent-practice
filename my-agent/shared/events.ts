@@ -39,6 +39,8 @@ export type ToolDefinition = {
 
 /** 每次 run 的公共信封 */
 export type EventMeta = {
+    /** 一次对话上下文；清空上下文会换新的 sessionId */
+    sessionId: string
     taskId: string
     /** 同一个 task 内从 1 开始单调递增 */
     seq: number

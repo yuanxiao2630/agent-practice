@@ -1,4 +1,5 @@
 import { config as loadEnv } from 'dotenv'
+import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // 本文件在 apps/server/src/config/，往上三层是 apps/，所以 ../../.env = apps/server/.env。
@@ -27,6 +28,15 @@ export const BODY_LIMIT = readNumber('BODY_LIMIT', 1_000_000)
 export const WEB_DIST = fileURLToPath(new URL('../../../web/dist/', import.meta.url)).replace(
     /[\\/]+$/,
     '',
+)
+
+// ---- 日志 ----
+/**
+ * 本地事件日志目录：一个 session 一个 <sessionId>.jsonl 文件。
+ * 默认落在仓库根目录的 logs/sessions；可以用 LOG_DIR 覆盖。
+ */
+export const LOG_DIR = resolve(
+    readString('LOG_DIR', fileURLToPath(new URL('../../../../logs/sessions/', import.meta.url))),
 )
 
 // ---- 模型 ----

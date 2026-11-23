@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { createMessages } from './agent/index.ts'
 import type { AgentEventBody, ChatMessage } from './agent/types.ts'
 import { createTaskState, TaskPhase, TaskStatus, type TaskState } from './types/task-state.ts'
@@ -22,9 +23,19 @@ export type ActiveRun = {
  */
 const messages: ChatMessage[] = createMessages()
 
+/**
+ * 一次对话上下文对应一个 sessionId，下面可以跑多个 taskId。
+ * 清空上下文（/api/reset、切仓库、取消仓库）时换新的 sessionId。
+ */
+let sessionId = randomUUID()
+
 let active: ActiveRun | null = null
 /** 最近一次结束的任务，给 /api/context 排查用 */
 let lastTask: TaskState | null = null
+
+export function getSessionId(): string {
+    return sessionId
+}
 
 export function getMessages(): ChatMessage[] {
     return messages
@@ -44,13 +55,16 @@ export function taskSnapshot(): TaskState | null {
 
 /** 切换/取消仓库、清空对话时用：旧上下文不能继续用，直接重置 */
 export function resetMessages(): void {
+    // 清空上下文 = 新 session；旧 session 的 jsonl 已经落盘，不会被覆盖
+    sessionId = randomUUID()
+
     messages.length = 0
     messages.push(...createMessages())
 }
 
 /** 开始一轮：返回它自己的 controller 和任务状态，调用方负责在 finally 里收尾 */
 export function beginRun(goal: string): ActiveRun {
-    const taskInfo = createTaskState(goal, getWorkspace()?.path)
+    const taskInfo = createTaskState(goal, getWorkspace()?.path, sessionId)
     taskInfo.status = TaskStatus.Running
 
     const run: ActiveRun = { id: taskInfo.taskId, controller: new AbortController(), task: taskInfo }

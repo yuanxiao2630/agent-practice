@@ -45,6 +45,7 @@ export async function streamChat(
 }
 
 export type HistoryPayload = {
+    sessionId?: string
     messages: ChatMessage[]
     /** 最后一问没有答案：被中断、报错，或服务端已经忘了这轮 */
     interrupted: boolean
@@ -55,6 +56,7 @@ export async function fetchHistory(): Promise<HistoryPayload> {
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
     return {
+        sessionId: typeof data.sessionId === 'string' ? data.sessionId : undefined,
         messages: (data.messages ?? []) as ChatMessage[],
         interrupted: Boolean(data.interrupted),
     }

@@ -28,6 +28,8 @@ export type TaskPhase = (typeof TaskPhase)[keyof typeof TaskPhase]
 
 /** 一次任务需要记录的信息 */
 export type TaskState = {
+    /** 这次任务属于哪个对话 session；清空上下文会换新的 sessionId */
+    sessionId: string
     taskId: string
     goal: string
     workspace?: string // 这次任务操作文件时以哪个目录为工作目录
@@ -41,8 +43,13 @@ export type TaskState = {
     endedAt?: string
 }
 
-export function createTaskState(goal: string, workspace?: string): TaskState {
+export function createTaskState(
+    goal: string,
+    workspace: string | undefined,
+    sessionId: string,
+): TaskState {
     return {
+        sessionId,
         taskId: randomUUID(),
         goal,
         workspace,

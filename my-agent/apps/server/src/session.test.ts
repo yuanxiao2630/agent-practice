@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { trackEvent, type ActiveRun } from './session.ts'
+import {
+    getMessages,
+    getSessionId,
+    resetMessages,
+    trackEvent,
+    type ActiveRun,
+} from './session.ts'
 import { createTaskState, TaskPhase, TaskStatus } from './types/task-state.ts'
 
 function makeRun(): ActiveRun {
-    const task = createTaskState('测试任务')
+    const task = createTaskState('测试任务', undefined, 'test-session')
     task.status = TaskStatus.Running
     return { id: task.taskId, controller: new AbortController(), task }
 }
@@ -77,4 +83,14 @@ test('trackEvent：completed / failed / cancelled 是三种不同的终止态', 
     assert.equal(cancelled.task.status, TaskStatus.Cancelled)
     assert.equal(cancelled.task.cancelReason, '用户中断')
     assert.equal(cancelled.task.lastError, undefined)
+})
+
+test('resetMessages：清空上下文会换一个新的 sessionId', () => {
+    const before = getSessionId()
+
+    resetMessages()
+
+    assert.notEqual(getSessionId(), before)
+    assert.equal(getMessages().length, 1)
+    assert.equal(getMessages()[0]?.role, 'system')
 })
