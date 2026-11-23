@@ -1,8 +1,9 @@
 import { createMessages } from './agent/index.ts'
-import type { AgentEvent, ChatMessage } from './agent/types.ts'
-import { createTaskState, TaskPhase, TaskStatus, type TaskState } from './task-state.ts'
+import type { AgentEventBody, ChatMessage } from './agent/types.ts'
+import { createTaskState, TaskPhase, TaskStatus, type TaskState } from './types/task-state.ts'
 import { getWorkspace } from './util/workspace.ts'
 
+// 服务端的会话和任务管理模块，负责保存对话上下文，并记录当前任务的执行状态。
 /**
  * 一次正在跑的任务。
  * 「有没有在跑 / 跑的是谁 / 怎么停 / 跑到哪一步」都在这一个值里，
@@ -49,51 +50,66 @@ export function resetMessages(): void {
 
 /** 开始一轮：返回它自己的 controller 和任务状态，调用方负责在 finally 里收尾 */
 export function beginRun(goal: string): ActiveRun {
-    const task = createTaskState(goal, getWorkspace()?.path)
-    task.status = TaskStatus.Running
+    const taskInfo = createTaskState(goal, getWorkspace()?.path)
+    taskInfo.status = TaskStatus.Running
 
-    const run: ActiveRun = { id: task.taskId, controller: new AbortController(), task }
+    const run: ActiveRun = { id: taskInfo.taskId, controller: new AbortController(), task: taskInfo }
     active = run
     return run
 }
 
 /** 收尾：状态、结束时间落定，并释放「正在跑」的位置 */
-export function finishRun(run: ActiveRun, status: TaskStatus, error?: string): void {
+export function finishRun(
+    run: ActiveRun,
+    status: TaskStatus,
+    detail?: { error?: string; cancelReason?: string },
+): void {
     run.task.status = status
     run.task.phase = TaskPhase.Done
     run.task.endedAt = new Date().toISOString()
-    if (error) run.task.lastError = error
+    if (detail?.error) run.task.lastError = detail.error
+    if (detail?.cancelReason) run.task.cancelReason = detail.cancelReason
 
     lastTask = run.task
     if (active?.id === run.id) active = null
 }
 
 /** 把 agent 事件映射到任务状态，让 /api/context 能看到「现在在调模型还是在跑工具」 */
-export function trackEvent(run: ActiveRun, event: AgentEvent): void {
+export function trackEvent(run: ActiveRun, event: AgentEventBody): void {
     const task = run.task
 
     switch (event.type) {
-        case 'round':
-            task.phase = TaskPhase.CallingModel
-            task.modelCalls++
+        case 'task.start':
+            task.status = TaskStatus.Running
+            task.phase = TaskPhase.ReadyForModel
             break
-        case 'tool_start':
+        case 'model.start':
+            task.phase = TaskPhase.CallingModel
+            // round 是 1-based 且包含 max_rounds 的总结调用，直接用事件里的值
+            task.modelCalls = Math.max(task.modelCalls, event.round)
+            break
+        case 'model.end':
+            task.phase = event.toolCallCount > 0 ? TaskPhase.RunningTools : TaskPhase.Done
+            break
+        case 'tool.start':
             task.phase = TaskPhase.RunningTools
             task.toolCalls++
             break
-        case 'final':
+        case 'tool.end':
+            break
+        case 'task.completed':
+            task.status = TaskStatus.Completed
             task.phase = TaskPhase.Done
             break
-        case 'aborted':
-            task.status = TaskStatus.Cancelled
-            task.lastError = event.reason
-            break
-        case 'error':
+        case 'task.failed':
             task.status = TaskStatus.Failed
-            task.lastError = event.message
+            task.phase = TaskPhase.Done
+            task.lastError = event.error
             break
-        case 'tool_end':
-        case 'tools':
+        case 'task.cancelled':
+            task.status = TaskStatus.Cancelled
+            task.phase = TaskPhase.Done
+            task.cancelReason = event.reason
             break
     }
 }

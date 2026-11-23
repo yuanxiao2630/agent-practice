@@ -1,3 +1,4 @@
+import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -5,6 +6,10 @@ export default defineConfig({
     // root 由命令行的 `vite apps/web` 指定，产物落在 apps/web/dist
     plugins: [react()],
     server: {
+        // 事件协议在仓库根目录的 shared/，开发服务器要允许读取 apps/web 之外的文件
+        fs: {
+            allow: [fileURLToPath(new URL('../..', import.meta.url))],
+        },
         // 默认会只绑 ::1，导致 http://127.0.0.1:5173 打不开；显式绑 IPv4
         host: '127.0.0.1',
         port: 5173,

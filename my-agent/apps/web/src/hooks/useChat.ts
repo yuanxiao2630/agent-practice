@@ -112,7 +112,11 @@ export function useChat() {
                     content,
                     (event) => {
                         switch (event.type) {
-                            case 'round':
+                            case 'task.start':
+                                setStatus('准备中…')
+                                break
+
+                            case 'model.start':
                                 setStatus(`第 ${event.round} 轮`)
                                 patchTurn(id, (t) => ({
                                     ...t,
@@ -124,55 +128,78 @@ export function useChat() {
                                 }))
                                 break
 
-                            case 'tool_start': {
+                            case 'model.end':
+                                setStatus(
+                                    event.toolCallCount > 0 ? '执行工具…' : '整理回答…',
+                                )
+                                break
+
+                            case 'tool.start': {
                                 const step: Step = {
-                                    id: `${event.round}-${event.name}-${Date.now()}-${Math.random()
-                                        .toString(36)
-                                        .slice(2, 7)}`,
+                                    id: event.toolCallId,
                                     name: event.name,
                                     argsText: compact(event.args),
                                     status: 'pending',
                                     note: '',
                                 }
-                                patchTurn(id, (t) => ({ ...t, steps: [...t.steps, step] }))
+                                patchTurn(id, (t) =>
+                                    t.steps.some((s) => s.id === step.id)
+                                        ? t
+                                        : { ...t, steps: [...t.steps, step] },
+                                )
                                 break
                             }
 
-                            case 'tool_end':
+                            case 'tool.end':
                                 patchTurn(id, (t) => {
                                     const idx = t.steps.findIndex(
-                                        (s) => s.status === 'pending' && s.name === event.name,
+                                        (s) => s.id === event.toolCallId,
                                     )
                                     if (idx < 0) return t
-                                    const ok = !event.content.startsWith('{"error"')
+
                                     const steps = t.steps.slice()
                                     steps[idx] = {
                                         ...steps[idx]!,
-                                        status: ok ? 'done' : 'failed',
-                                        note: ok ? `返回 ${event.content.length} 字符` : compact(event.content),
+                                        status: event.status,
+                                        note:
+                                            event.status === 'done'
+                                                ? `返回 ${event.content.length} 字符`
+                                                : event.status === 'cancelled'
+                                                  ? '已中断'
+                                                  : compact(event.error ?? event.content),
                                     }
                                     return { ...t, steps }
                                 })
                                 break
 
-                            case 'final':
+                            case 'task.completed':
                                 patchTurn(id, (t) => ({
                                     ...t,
                                     assistant: event.content || '（模型没有返回内容）',
-                                    finalMessages:
-                                        event.messages ??
-                                        t.snapshots[t.snapshots.length - 1]?.messages,
+                                    finalMessages: event.messages,
                                 }))
                                 setStatus(EMPTY)
                                 break
-                            case 'aborted':
+
+                            case 'task.cancelled':
                                 patchTurn(id, (t) => markCancelled(t, event.reason))
                                 setStatus('已中断')
                                 break
 
-                            case 'error':
-                                patchTurn(id, (t) => ({ ...t, error: event.message }))
+                            case 'task.failed':
+                                patchTurn(id, (t) => ({
+                                    ...t,
+                                    error: event.error,
+                                    steps: t.steps.map((s) =>
+                                        s.status === 'pending'
+                                            ? { ...s, status: 'failed' as const, note: '未完成' }
+                                            : s,
+                                    ),
+                                }))
                                 setStatus('出错')
+                                break
+
+                            default:
                                 break
                         }
                     },

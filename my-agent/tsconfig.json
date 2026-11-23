@@ -9,6 +9,11 @@
     "noEmit": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["apps/server/**/*.ts", "apps/server-express/**/*.ts", "examples/**/*.ts"],
+  "include": [
+    "apps/server/**/*.ts",
+    "apps/server-express/**/*.ts",
+    "shared/**/*.ts",
+    "examples/**/*.ts"
+  ],
   "exclude": ["node_modules", "apps/web", "apps/web/dist"]
 }

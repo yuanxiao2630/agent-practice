@@ -1,6 +1,13 @@
 import type { Request, Response } from 'express'
-import { abortError, isAbortError, runAgent, sealToolCalls } from '../../agent/index.ts'
-import type { AgentEvent } from '../../agent/types.ts'
+import {
+    abortCauseOf,
+    abortError,
+    isAbortError,
+    runAgent,
+    sealToolCalls,
+} from '../../agent/index.ts'
+import { enabledToolDefinitions } from '../../agent/tools/index.ts'
+import type { AgentEvent, AgentEventBody } from '../../agent/types.ts'
 import {
     beginRun,
     currentRun,
@@ -16,7 +23,7 @@ import { startSse } from '../sse.ts'
 import type { RouteHandler } from './types.ts'
 
 /**
- * 提问：SSE 流式返回「第几轮 / 调了什么工具 / 最终回答」。
+ * 提问：SSE 流式返回任务生命周期（task/model/tool 事件）。
  * 同一时刻只允许一轮（单用户本地），靠 isRunning 挡住并发。
  */
 export const chatRoute: RouteHandler = async (req, res) => {
@@ -30,37 +37,77 @@ export const chatRoute: RouteHandler = async (req, res) => {
     const run = beginRun(text)
     const sse = startSse(res)
 
-    // 中断事件要告诉前端「停在第几轮」，顺手也给后续恢复留一个 id
-    let round = 0
-    const emit = (event: AgentEvent) => {
-        if (event.type === 'round') round = event.round
+    // 信封统一在这里补：agent 只负责业务事件，不需要知道 taskId/seq
+    let seq = 0
+    const emit = (event: AgentEventBody) => {
+        const full: AgentEvent = {
+            ...event,
+            taskId: run.id,
+            seq: ++seq,
+            at: new Date().toISOString(),
+        }
         trackEvent(run, event)
-        sse.send(event)
+        sse.send(full)
     }
 
     // 浏览器刷新 / 关标签 / 前端 abort：连接一断就停止本轮
     res.on('close', () => {
-        if (!res.writableEnded) run.controller.abort(abortError('客户端断开'))
+        if (!res.writableEnded) {
+            run.controller.abort(abortError('客户端断开', 'client_disconnect'))
+        }
     })
 
     // 用户输入 -> user 消息（这行就是「把页面输入塞给 content」的地方）
     messages.push({ role: 'user', content: text })
 
     try {
-        await runAgent(messages, emit, run.controller.signal)
+        // 本次 run 实际发给模型的工具；和 task.start 用的是同一份
+        const activeTools = enabledToolDefinitions()
+        emit({
+            type: 'task.start',
+            goal: text,
+            workspace: run.task.workspace,
+            tools: activeTools,
+        })
+
+        const result = await runAgent(messages, emit, run.controller.signal, activeTools)
+
         finishRun(run, TaskStatus.Completed)
+        emit({
+            type: 'task.completed',
+            rounds: result.rounds,
+            reason: result.reason,
+            content: result.content,
+            messages,
+        })
     } catch (err) {
         if (isAbortError(err, run.controller.signal)) {
-            const reason = (run.controller.signal.reason as Error | undefined)?.message ?? '已中断'
+            const reasonErr = run.controller.signal.reason as Error | undefined
+            const reason = reasonErr?.message ?? '已中断'
+            const cause = abortCauseOf(reasonErr ?? err)
+
             // 只补缺的回执，不删已有记录：这一轮留在 messages 里可查
-            sealToolCalls(messages, `用户中断，该工具没有返回结果（${reason}）`)
-            emit({ type: 'aborted', round, reason, runId: run.id })
-            finishRun(run, TaskStatus.Cancelled, reason)
+            sealToolCalls(messages, `本轮中断，该工具没有返回结果（${reason}）`)
+
+            finishRun(run, TaskStatus.Cancelled, { cancelReason: reason })
+            emit({
+                type: 'task.cancelled',
+                rounds: run.task.modelCalls,
+                reason,
+                cause,
+                messages,
+            })
         } else {
             const message = err instanceof Error ? err.message : String(err)
             sealToolCalls(messages, `执行失败，该工具没有返回结果（${message}）`)
-            emit({ type: 'error', message })
-            finishRun(run, TaskStatus.Failed, message)
+
+            finishRun(run, TaskStatus.Failed, { error: message })
+            emit({
+                type: 'task.failed',
+                rounds: run.task.modelCalls,
+                error: message,
+                messages,
+            })
         }
     } finally {
         sse.end()
@@ -75,6 +122,6 @@ export function cancelChatRoute(_req: Request, res: Response): void {
         return
     }
 
-    run.controller.abort(abortError('用户中断'))
+    run.controller.abort(abortError('用户中断', 'user'))
     sendJson(res, 200, { ok: true, cancelled: true, runId: run.id })
 }

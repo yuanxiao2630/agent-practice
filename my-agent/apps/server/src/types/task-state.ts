@@ -36,6 +36,7 @@ export type TaskState = {
     modelCalls: number // 请求模型的次数
     toolCalls: number // 执行工具的次数（失败也算）
     lastError?: string
+    cancelReason?: string // 被取消时的原因，和 lastError 分开
     startedAt: string
     endedAt?: string
 }

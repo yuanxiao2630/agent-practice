@@ -7,11 +7,12 @@ import {
     listWorkspaceEntries,
     readFileContent,
     searchWeb,
+    type ToolDefinition,
 } from './tools/index.ts'
 import { callMcpTool } from '../mcp/index.ts'
 import { getWorkspace, type Workspace } from '../util/workspace.ts'
 import { buildFinalAnswerPrompt, buildSystemPrompt } from './prompt.ts'
-import type { ChatMessage, Emit } from './types.ts'
+import type { CancelCause, ChatMessage, CompletedReason, Emit } from './types.ts'
 
 export * from './types.ts'
 
@@ -37,11 +38,18 @@ export function createMessages(workspace: Workspace | null = getWorkspace()): Ch
     return [{ role: 'system', content: buildSystemPrompt(workspace) }]
 }
 
-/** 取消时统一用这个名字，别和真实异常混在一起 */
-export function abortError(message = '已中断') {
-    const err = new Error(message)
+/** 取消时统一用这个名字，别和真实异常混在一起；cause 用来区分谁取消的 */
+export function abortError(message = '已中断', cause: CancelCause = 'user') {
+    const err = new Error(message) as Error & { abortCause?: CancelCause }
     err.name = 'AbortError'
+    err.abortCause = cause
     return err
+}
+
+/** 从 AbortController 的 reason 里取取消来源；拿不到时按用户取消处理 */
+export function abortCauseOf(err: unknown): CancelCause {
+    const e = err as { abortCause?: CancelCause } | null
+    return e?.abortCause ?? 'user'
 }
 
 export function isAbortError(err: unknown, signal?: AbortSignal): boolean {
@@ -82,6 +90,13 @@ export function sealToolCalls(msgs: ChatMessage[], reason: string): boolean {
     return sealed
 }
 
+/** runAgent 的返回值：路由层用它发 task.completed，不再由 agent 自己发终止事件 */
+export type AgentResult = {
+    content: string
+    rounds: number
+    reason: CompletedReason
+}
+
 /**
  * 跑一轮完整的 agent 循环：用户消息要由调用方先 push 进 messages。
  * 会把 assistant / tool 消息追加进 messages，所以传入的数组就是对话上下文。
@@ -90,8 +105,10 @@ export async function runAgent(
     messages: ChatMessage[],
     emit: Emit = () => {},
     signal?: AbortSignal,
-): Promise<string> {
+    activeTools: ToolDefinition[] = enabledToolDefinitions(),
+): Promise<AgentResult> {
     let count = 1
+    let modelCalls = 0
 
     if (signal?.aborted) throw signal.reason ?? abortError()
 
@@ -100,11 +117,9 @@ export async function runAgent(
     const workspace = getWorkspace()
 
     // 用户在面板里关掉的工具不发给模型；全部关闭时不传 tools 字段，
-    // 避免部分 OpenAI 兼容接口把空数组当成非法参数
-    const activeTools = enabledToolDefinitions()
+    // 避免部分 OpenAI 兼容接口把空数组当成非法参数。
+    // tools 由路由层算一次后传进来，保证 task.start 和实际请求的是同一份。
     const toolsParam = activeTools.length > 0 ? { tools: activeTools } : {}
-
-    emit({ type: 'tools', tools: activeTools })
 
     while (true) {
         if (signal?.aborted) throw signal.reason ?? abortError()
@@ -112,12 +127,18 @@ export async function runAgent(
         // 到达最大轮次：这次请求不传 tools（模型没有任何可调用的函数），
         // 并用一条 system 指令要求它直接总结。用副本追加，不污染 messages 历史。
         if (count > MAX_ROUNDS) {
+            const summaryMessages: ChatMessage[] = [
+                ...messages,
+                { role: 'system' as const, content: buildFinalAnswerPrompt(MAX_ROUNDS) },
+            ]
+
+            emit({ type: 'model.start', round: count, messages: summaryMessages })
+            modelCalls++
+            const startedAt = Date.now()
+
             const finalCompletion = await chat(
                 {
-                    messages: [
-                        ...messages,
-                        { role: 'system' as const, content: buildFinalAnswerPrompt(MAX_ROUNDS) },
-                    ],
+                    messages: summaryMessages,
                     model: MODEL,
                     thinking: { type: 'enabled' },
                     reasoning_effort: 'high',
@@ -125,13 +146,28 @@ export async function runAgent(
                 },
                 signal,
             )
-            const content = finalCompletion.choices[0]?.message.content ?? ''
+
+            const choice = finalCompletion.choices[0]
+            if (!choice) throw new Error('模型返回了空的 choices')
+            if (signal?.aborted) throw signal.reason ?? abortError()
+
+            const content = choice.message.content ?? ''
+            emit({
+                type: 'model.end',
+                round: count,
+                finishReason: choice.finish_reason ?? 'unknown',
+                content,
+                toolCallCount: 0,
+                durationMs: Date.now() - startedAt,
+            })
+
             messages.push({ role: 'assistant', content })
-            emit({ type: 'final', rounds: count - 1, content, messages })
-            return content
+            return { content, rounds: modelCalls, reason: 'max_rounds' }
         }
 
-        emit({ type: 'round', round: count, messages })
+        emit({ type: 'model.start', round: count, messages })
+        modelCalls++
+        const startedAt = Date.now()
 
         const completion = await chat(
             {
@@ -150,17 +186,25 @@ export async function runAgent(
         if (!choice) throw new Error('模型返回了空的 choices')
 
         const message = choice.message
-        const finishReason = choice.finish_reason
+        const finishReason = choice.finish_reason ?? 'unknown'
 
         if (signal?.aborted) throw signal.reason ?? abortError()
 
+        const toolCalls = message.tool_calls ?? []
+        emit({
+            type: 'model.end',
+            round: count,
+            finishReason,
+            content: message.content ?? '',
+            toolCallCount: toolCalls.length,
+            durationMs: Date.now() - startedAt,
+        })
+
         if (finishReason === 'tool_calls') {
-            const toolCalls = message.tool_calls ?? []
             if (toolCalls.length === 0) {
                 const content = message.content ?? ''
                 messages.push({ role: 'assistant', content })
-                emit({ type: 'final', rounds: count, content, messages })
-                return content
+                return { content, rounds: modelCalls, reason: 'empty_tool_calls' }
             }
 
             // 1. 先把带 tool_calls 的 assistant 消息放回上下文
@@ -176,33 +220,53 @@ export async function runAgent(
                 // 每个 tool_call 都必须回一条 role: 'tool'，且 id 对上；
                 // 类型不支持 / 参数解析失败 / 工具抛错都不能跳过，
                 // 否则回执数量与 tool_calls 不匹配，下一次请求直接 400
+                const toolCallId = item.id
+                const toolName = item.type === 'function' ? item.function.name : `(${item.type})`
+                const args = item.type === 'function' ? safeParse(item.function.arguments) : {}
+                emit({ type: 'tool.start', round: count, toolCallId, name: toolName, args })
+
+                const toolStartedAt = Date.now()
                 let content: string
+                let status: 'done' | 'failed' | 'cancelled' = 'done'
+                let error: string | undefined
+
                 if (item.type !== 'function') {
-                    emit({ type: 'tool_start', round: count, name: `(${item.type})`, args: {} })
-                    content = JSON.stringify({ error: `不支持的工具类型: ${item.type}` })
-                    emit({ type: 'tool_end', round: count, name: `(${item.type})`, content })
+                    error = `不支持的工具类型: ${item.type}`
+                    content = JSON.stringify({ error })
+                    status = 'failed'
                 } else {
-                    const name = item.function.name
-                    emit({
-                        type: 'tool_start',
-                        round: count,
-                        name,
-                        args: safeParse(item.function.arguments),
-                    })
                     try {
                         // 2. arguments 是 JSON 字符串，必须 parse
-                        const args = safeObject(JSON.parse(item.function.arguments || '{}'))
-                        const res = await useFun(name, args, workspace?.path ?? null, signal)
+                        const argsObject = safeObject(JSON.parse(item.function.arguments || '{}'))
+                        const res = await useFun(
+                            item.function.name,
+                            argsObject,
+                            workspace?.path ?? null,
+                            signal,
+                        )
                         // JSON.stringify(undefined) 会得到 undefined，兜成 "null"
                         content = JSON.stringify(res) ?? 'null'
 
                         if (signal?.aborted) throw signal.reason ?? abortError()
                     } catch (e) {
-                        // 把错误当结果回给模型，让它自己决定重试或换个思路
-                        content = JSON.stringify({ error: e instanceof Error ? e.message : String(e) })
+                        // 把错误当结果回给模型，让它自己决定重试或换个思路；
+                        // 中断和真实失败要分开，UI 的 StepStatus 直接用这个状态
+                        error = e instanceof Error ? e.message : String(e)
+                        content = JSON.stringify({ error })
+                        status = isAbortError(e, signal) ? 'cancelled' : 'failed'
                     }
-                    emit({ type: 'tool_end', round: count, name, content })
                 }
+
+                emit({
+                    type: 'tool.end',
+                    round: count,
+                    toolCallId,
+                    name: toolName,
+                    status,
+                    content,
+                    error,
+                    durationMs: Date.now() - toolStartedAt,
+                })
                 messages.push({ role: 'tool', tool_call_id: item.id, content })
             }
             count++
@@ -216,8 +280,11 @@ export async function runAgent(
 
         if (finishReason !== 'stop') console.warn('模型没有调用工具，finish_reason =', finishReason)
 
-        emit({ type: 'final', rounds: count, content, messages })
-        return content
+        return {
+            content,
+            rounds: modelCalls,
+            reason: finishReason === 'stop' ? 'stop' : 'other',
+        }
     }
 }
 

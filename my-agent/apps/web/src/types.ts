@@ -1,26 +1,12 @@
-// 后端 agent.ts / server.ts 里 ChatMessage 是 any，这里给出页面实际用到的字段
-export type ToolCall = {
-    id: string
-    type: string
-    function: { name: string; arguments: string }
-}
+/**
+ * 事件协议在仓库根目录的 shared/events.ts，server 和 web 共用同一份定义。
+ * 这里只做转发，页面其他文件继续从 '../types.ts' / './types.ts' import。
+ */
+import type { ChatMessage } from '../../../shared/events.ts'
 
-export type ChatMessage = {
-    role: 'system' | 'user' | 'assistant' | 'tool'
-    content?: string | null
-    tool_calls?: ToolCall[]
-    tool_call_id?: string
-}
+export type { AgentEvent, ChatMessage, ToolCall } from '../../../shared/events.ts'
 
-export type AgentEvent =
-    | { type: 'round'; round: number; messages: ChatMessage[] }
-    | { type: 'tool_start'; round: number; name: string; args: unknown }
-    | { type: 'tool_end'; round: number; name: string; content: string }
-    | { type: 'final'; rounds: number; content: string; messages?: ChatMessage[] }
-    | { type: 'error'; message: string }
-    | { type: 'aborted'; round: number; reason: string; runId?: string }
-
-/** 一轮工具调用的快照：round 事件到达时把 messages 存下来 */
+/** 一轮工具调用的快照：model.start 到达时把 messages 存下来 */
 export type RoundSnapshot = {
     round: number
     messages: ChatMessage[]

@@ -18,8 +18,12 @@ const ROLE_LABEL: Record<ChatMessage['role'], string> = {
 function messageText(m: ChatMessage): string {
     const parts: string[] = []
     if (m.content) parts.push(m.content)
-    for (const tc of m.tool_calls ?? []) {
-        parts.push(`→ ${tc.function.name}(${tc.function.arguments})`)
+    if (m.role === 'assistant') {
+        for (const tc of m.tool_calls ?? []) {
+            const name = tc.function?.name ?? tc.type
+            const args = tc.function?.arguments ?? ''
+            parts.push(`→ ${name}(${args})`)
+        }
     }
     return parts.join('\n\n')
 }
@@ -34,12 +38,13 @@ function MessageCard({ message, index }: { message: ChatMessage; index: number }
             <header className="msg-card-head">
                 <span className="idx">#{index + 1}</span>
                 <span className="role-badge">{ROLE_LABEL[message.role]}</span>
-                {message.tool_calls?.map((tc) => (
-                    <span key={tc.id} className="tag tool-tag">
-                        {tc.function.name}
-                    </span>
-                ))}
-                {message.tool_call_id && (
+                {message.role === 'assistant' &&
+                    message.tool_calls?.map((tc) => (
+                        <span key={tc.id} className="tag tool-tag">
+                            {tc.function?.name ?? tc.type}
+                        </span>
+                    ))}
+                {message.role === 'tool' && message.tool_call_id && (
                     <span className="tag id-tag" title={message.tool_call_id}>
                         {message.tool_call_id.slice(0, 8)}
                     </span>

@@ -1,5 +1,5 @@
 import type OpenAI from 'openai'
-import type { ToolDefinition } from './tools/types.ts'
+import type { AgentEventBody } from '../../../../shared/events.ts'
 
 /**
  * 工具调用直接从 SDK 的类型里派生，SDK 升级时不会和它脱节。
@@ -20,14 +20,13 @@ export type ChatMessage =
     | { role: 'assistant'; content: string; tool_calls?: ToolCall[] }
     | { role: 'tool'; tool_call_id: string; content: string }
 
-/** agent 往外吐的事件，HTTP 层把它转成 SSE，CLI 层转成终端输出 */
-export type AgentEvent =
-    | { type: 'round'; round: number; messages: ChatMessage[] }
-    | { type: 'tool_start'; round: number; name: string; args: unknown }
-    | { type: 'tool_end'; round: number; name: string; content: string }
-    | { type: 'final'; rounds: number; content: string; messages: ChatMessage[] }
-    | { type: 'aborted'; round: number; reason: string; runId?: string }
-    | { type: 'error'; message: string }
-    | { type: 'tools'; tools: ToolDefinition[] }
+/** 事件协议在 shared/events.ts，server 和 web 共用同一份定义 */
+export type {
+    AgentEvent,
+    AgentEventBody,
+    CancelCause,
+    CompletedReason,
+    EventMeta,
+} from '../../../../shared/events.ts'
 
-export type Emit = (event: AgentEvent) => void
+export type Emit = (event: AgentEventBody) => void
