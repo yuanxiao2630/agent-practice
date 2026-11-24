@@ -7,13 +7,15 @@ import {
 } from '../../agent/index.ts'
 import { enabledToolDefinitions } from '../../agent/tools/index.ts'
 import type { AgentEvent, AgentEventBody } from '../../agent/types.ts'
-import { appendEvent } from '../../logging/event-log.ts'
+import { appendEvent, flushEventLog } from '../../logging/event-log.ts'
 import {
     beginRun,
     currentRun,
     finishRun,
     getMessages,
     isRunning,
+    releaseRun,
+    saveCheckpoint,
     trackEvent,
 } from '../../session.ts'
 import { TaskStatus } from '../../types/task-state.ts'
@@ -39,7 +41,7 @@ export async function chatRoute({ req, res }: Ctx): Promise<void> {
 
     // 信封统一在这里补：agent 只负责业务事件，不需要知道 sessionId/taskId/seq
     let seq = 0
-    const emit = (event: AgentEventBody) => {
+    const emit = async (event: AgentEventBody) => {
         const full: AgentEvent = {
             ...event,
             sessionId: run.task.sessionId,
@@ -48,8 +50,11 @@ export async function chatRoute({ req, res }: Ctx): Promise<void> {
             at: new Date().toISOString(),
         }
         trackEvent(run, event)
-        // 先交给日志队列，再发 SSE；写盘失败不影响对话
+        // checkpoint 是恢复依据；写失败就停止，不先发布无法恢复的完成事件。
+        await saveCheckpoint(full.seq)
+        // JSONL 仍是 best-effort，与 checkpoint 不构成事务，也不用于自动重放。
         appendEvent(full)
+        await flushEventLog()
         sse.send(full)
     }
 
@@ -66,7 +71,7 @@ export async function chatRoute({ req, res }: Ctx): Promise<void> {
     try {
         // 本次 run 实际发给模型的工具；和 task.start 用的是同一份
         const activeTools = enabledToolDefinitions()
-        emit({
+        await emit({
             type: 'task.start',
             goal: text,
             workspace: run.task.workspace,
@@ -76,7 +81,7 @@ export async function chatRoute({ req, res }: Ctx): Promise<void> {
         const result = await runAgent(messages, emit, run.controller.signal, activeTools)
 
         finishRun(run, TaskStatus.Completed)
-        emit({
+        await emit({
             type: 'task.completed',
             rounds: result.rounds,
             reason: result.reason,
@@ -93,7 +98,7 @@ export async function chatRoute({ req, res }: Ctx): Promise<void> {
             sealToolCalls(messages, `本轮中断，该工具没有返回结果（${reason}）`)
 
             finishRun(run, TaskStatus.Cancelled, { cancelReason: reason })
-            emit({
+            await reportTermination({
                 type: 'task.cancelled',
                 rounds: run.task.modelCalls,
                 reason,
@@ -105,7 +110,7 @@ export async function chatRoute({ req, res }: Ctx): Promise<void> {
             sealToolCalls(messages, `执行失败，该工具没有返回结果（${message}）`)
 
             finishRun(run, TaskStatus.Failed, { error: message })
-            emit({
+            await reportTermination({
                 type: 'task.failed',
                 rounds: run.task.modelCalls,
                 error: message,
@@ -113,7 +118,29 @@ export async function chatRoute({ req, res }: Ctx): Promise<void> {
             })
         }
     } finally {
+        releaseRun(run)
         sse.end()
+    }
+
+    async function reportTermination(event: AgentEventBody): Promise<void> {
+        try {
+            await emit(event)
+        } catch (error) {
+            const message = `checkpoint 保存失败：${error instanceof Error ? error.message : String(error)}`
+            console.error('[checkpoint]', error)
+            finishRun(run, TaskStatus.Failed, { error: message })
+            // 存储故障时仍报告给客户端；旧 checkpoint 保留，重启按 interrupted 恢复。
+            sse.send({
+                type: 'task.failed',
+                rounds: run.task.modelCalls,
+                error: message,
+                messages,
+                sessionId: run.task.sessionId,
+                taskId: run.id,
+                seq: ++seq,
+                at: new Date().toISOString(),
+            })
+        }
     }
 }
 

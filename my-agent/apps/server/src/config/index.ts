@@ -39,6 +39,9 @@ export const LOG_DIR = resolve(
     readString('LOG_DIR', fileURLToPath(new URL('../../../../logs/sessions/', import.meta.url))),
 )
 
+/** 单用户服务最近一次可恢复的现场；不随用户选择的工作区变化。 */
+export const CHECKPOINT_FILE = resolve(readString('CHECKPOINT_FILE', resolve(LOG_DIR, '../checkpoint.json')))
+
 // ---- 模型 ----
 export const MODEL = readString('MODEL', 'deepseek-flash')
 export const DEEPSEEK_BASE_URL = readString('DEEPSEEK_BASE_URL', 'https://api.deepseek.com')

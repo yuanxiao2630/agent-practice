@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import type { AddressInfo } from 'node:net'
 import { after, before, test } from 'node:test'
-import { createApp } from './app.ts'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+const dataDir = await mkdtemp(join(tmpdir(), 'agent-http-test-'))
+process.env.CHECKPOINT_FILE = join(dataDir, 'checkpoint.json')
+const { createApp } = await import('./app.ts')
 
 /**
  * 路由层集成测试：createApp 不初始化 MCP、不连模型，
@@ -18,6 +24,7 @@ before(async () => {
 
 after(async () => {
     await new Promise<void>((resolve) => app.close(() => resolve()))
+    await rm(dataDir, { recursive: true, force: true })
 })
 
 async function getJson(path: string) {
@@ -118,6 +125,10 @@ test('POST /api/reset：清空后只剩 system 消息，并换新的 sessionId',
     assert.equal(data.messages.length, 1)
     assert.equal(data.messages[0].role, 'system')
     assert.equal(data.sessionId, after.data.sessionId)
+    const checkpoint = JSON.parse(await readFile(process.env.CHECKPOINT_FILE!, 'utf8'))
+    assert.equal(checkpoint.sessionId, data.sessionId)
+    assert.equal(checkpoint.task, null)
+    assert.deepEqual(checkpoint.messages, data.messages)
 })
 
 test('未知路径 404，方法不对 405', async () => {

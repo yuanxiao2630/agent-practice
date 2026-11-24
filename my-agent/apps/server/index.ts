@@ -2,9 +2,12 @@ import { DEEPSEEK_API_KEY, HOST, PORT, WEB_DIST } from './src/config/index.ts'
 import { createApp } from './src/http/app.ts'
 import { flushEventLog } from './src/logging/event-log.ts'
 import { closeMcp, initMcp } from './src/mcp/index.ts'
+import { abortError } from './src/agent/index.ts'
+import { checkpointStore } from './src/persistence/checkpoint.ts'
+import { currentRun, restoreSession } from './src/session.ts'
 
 /**
- * 服务入口：只做三件事——检查配置、初始化 MCP、监听端口。
+ * 服务入口：检查配置、恢复 checkpoint、初始化 MCP、监听端口。
  * 路由和业务都在 src/http 和 src/session 里，这里保持可读。
  */
 
@@ -13,6 +16,7 @@ if (!DEEPSEEK_API_KEY) {
 }
 
 // MCP 是 fail-soft 的：高德连不上只 warn，不影响服务启动和普通对话
+await restoreSession()
 await initMcp()
 
 const app = createApp()
@@ -31,12 +35,16 @@ async function shutdown(signal: string): Promise<void> {
     closing = true
     console.log(`\n[${signal}] 正在关闭…`)
 
-    app.close()
+    currentRun()?.controller.abort(abortError('服务关闭', 'server_shutdown'))
+    // 等待任务 catch/finally 保存取消现场；不响应取消的工具最多等待 3 秒。
+    await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 3_000)
+        app.close(() => { clearTimeout(timer); resolve() })
+    })
     await flushEventLog().catch(() => {})
+    await checkpointStore.flush().catch((error) => console.error('[checkpoint] 关闭时写入失败：', error))
     await closeMcp().catch(() => {})
 
-    // 还有 SSE 长连接时 close 要等到连接断开，给个兜底，别让 Ctrl+C 卡住
-    setTimeout(() => process.exit(0), 3_000).unref()
     process.exit(0)
 }
 

@@ -14,6 +14,7 @@ export const TaskStatus = {
     Completed: 'completed', // 正常结束
     Failed: 'failed', // 因错误停止
     Cancelled: 'cancelled', // 被主动取消
+    Interrupted: 'interrupted', // 重启时发现上次执行尚未结束
 } as const
 export type TaskStatus = (typeof TaskStatus)[keyof typeof TaskStatus]
 
@@ -39,6 +40,7 @@ export type TaskState = {
     toolCalls: number // 执行工具的次数（失败也算）
     lastError?: string
     cancelReason?: string // 被取消时的原因，和 lastError 分开
+    interruptedReason?: string
     startedAt: string
     endedAt?: string
 }

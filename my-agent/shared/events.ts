@@ -13,12 +13,9 @@
  *   - 快照只放在检查点：`model.start` 和终止事件带 messages，其余事件只带增量。
  */
 
-export type ToolCall = {
-    id: string
-    type: string
-    // custom tool call 没有 function，前端展示时要做兜底
-    function?: { name: string; arguments: string }
-}
+export type ToolCall =
+    | { id: string; type: 'function'; function: { name: string; arguments: string } }
+    | { id: string; type: 'custom'; custom: { name: string; input: string }; function?: never }
 
 /** 页面/事件里流通的消息形状；服务端内部可以使用更严格的 SDK 派生类型 */
 export type ChatMessage =

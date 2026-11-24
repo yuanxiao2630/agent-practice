@@ -36,17 +36,17 @@ export async function selectWorkspaceRoute({ req, res }: Ctx): Promise<void> {
     const previous = getWorkspace()
     const workspace = await setWorkspace(target)
     const reset = previous?.path !== workspace.path
-    if (reset) resetMessages()
+    if (reset) await resetMessages()
 
     sendJson(res, 200, { workspace, reset })
 }
 
 /** 取消选择：回到「不允许读取任何本地文件」的状态 */
-export function clearWorkspaceRoute({ res }: Ctx): void {
+export async function clearWorkspaceRoute({ res }: Ctx): Promise<void> {
     assertIdle('取消仓库')
 
     clearWorkspace()
-    resetMessages()
+    await resetMessages()
 
     sendJson(res, 200, { workspace: null, reset: true })
 }

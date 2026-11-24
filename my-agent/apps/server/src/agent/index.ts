@@ -132,7 +132,8 @@ export async function runAgent(
                 { role: 'system' as const, content: buildFinalAnswerPrompt(MAX_ROUNDS) },
             ]
 
-            emit({ type: 'model.start', round: count, messages: summaryMessages })
+            await emit({ type: 'model.start', round: count, messages: summaryMessages })
+            if (signal?.aborted) throw signal.reason ?? abortError()
             modelCalls++
             const startedAt = Date.now()
 
@@ -152,7 +153,8 @@ export async function runAgent(
             if (signal?.aborted) throw signal.reason ?? abortError()
 
             const content = choice.message.content ?? ''
-            emit({
+            messages.push({ role: 'assistant', content })
+            await emit({
                 type: 'model.end',
                 round: count,
                 finishReason: choice.finish_reason ?? 'unknown',
@@ -161,11 +163,11 @@ export async function runAgent(
                 durationMs: Date.now() - startedAt,
             })
 
-            messages.push({ role: 'assistant', content })
             return { content, rounds: modelCalls, reason: 'max_rounds' }
         }
 
-        emit({ type: 'model.start', round: count, messages })
+        await emit({ type: 'model.start', round: count, messages })
+        if (signal?.aborted) throw signal.reason ?? abortError()
         modelCalls++
         const startedAt = Date.now()
 
@@ -191,7 +193,13 @@ export async function runAgent(
         if (signal?.aborted) throw signal.reason ?? abortError()
 
         const toolCalls = message.tool_calls ?? []
-        emit({
+        // 先提交模型回复，再报告 model.end；checkpoint 才能记录待执行工具。
+        messages.push({
+            role: 'assistant',
+            content: message.content ?? '',
+            ...(finishReason === 'tool_calls' && toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+        })
+        await emit({
             type: 'model.end',
             round: count,
             finishReason,
@@ -203,16 +211,8 @@ export async function runAgent(
         if (finishReason === 'tool_calls') {
             if (toolCalls.length === 0) {
                 const content = message.content ?? ''
-                messages.push({ role: 'assistant', content })
                 return { content, rounds: modelCalls, reason: 'empty_tool_calls' }
             }
-
-            // 1. 先把带 tool_calls 的 assistant 消息放回上下文
-            messages.push({
-                role: 'assistant',
-                content: message.content ?? '',
-                tool_calls: message.tool_calls,
-            })
 
             for (const item of toolCalls) {
                 if (signal?.aborted) throw signal.reason ?? abortError()
@@ -223,7 +223,8 @@ export async function runAgent(
                 const toolCallId = item.id
                 const toolName = item.type === 'function' ? item.function.name : `(${item.type})`
                 const args = item.type === 'function' ? safeParse(item.function.arguments) : {}
-                emit({ type: 'tool.start', round: count, toolCallId, name: toolName, args })
+                await emit({ type: 'tool.start', round: count, toolCallId, name: toolName, args })
+                if (signal?.aborted) throw signal.reason ?? abortError()
 
                 const toolStartedAt = Date.now()
                 let content: string
@@ -257,7 +258,9 @@ export async function runAgent(
                     }
                 }
 
-                emit({
+                // 工具回执先进入上下文，持久化成功后才能开始下一个工具。
+                messages.push({ role: 'tool', tool_call_id: item.id, content })
+                await emit({
                     type: 'tool.end',
                     round: count,
                     toolCallId,
@@ -267,7 +270,6 @@ export async function runAgent(
                     error,
                     durationMs: Date.now() - toolStartedAt,
                 })
-                messages.push({ role: 'tool', tool_call_id: item.id, content })
             }
             count++
             continue
@@ -275,8 +277,6 @@ export async function runAgent(
 
         // stop / length / content_filter 等：结束本轮，把模型的话当作最终回答
         const content = message.content ?? ''
-
-        messages.push({ role: 'assistant', content })
 
         if (finishReason !== 'stop') console.warn('模型没有调用工具，finish_reason =', finishReason)
 

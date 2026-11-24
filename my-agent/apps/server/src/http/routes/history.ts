@@ -17,7 +17,7 @@ export function historyRoute({ res }: Ctx): void {
         .map((m) => ({ role: m.role, content: m.content }))
 
     // 最后一条是 user 且当前没在跑：这一问没答完（被中断或报错），前端要标出来
-    const interrupted = !isRunning() && history.at(-1)?.role === 'user'
+    const interrupted = !isRunning() && (taskSnapshot()?.status === 'interrupted' || history.at(-1)?.role === 'user')
 
     sendJson(res, 200, { sessionId: getSessionId(), messages: history, interrupted })
 }
@@ -33,9 +33,9 @@ export function contextRoute({ res }: Ctx): void {
 }
 
 /** 清空上下文（换仓库时会自动清，这里给「重新开始」用） */
-export function resetRoute({ res }: Ctx): void {
+export async function resetRoute({ res }: Ctx): Promise<void> {
     if (isRunning()) throw new HttpError(409, 'Agent 正在运行，先中断再清空')
 
-    resetMessages()
+    await resetMessages()
     sendJson(res, 200, { ok: true, sessionId: getSessionId() })
 }
