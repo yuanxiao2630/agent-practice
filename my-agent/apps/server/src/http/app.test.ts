@@ -112,6 +112,16 @@ test('POST /api/chat：空消息 400，非法 JSON 400', async () => {
     assert.equal(broken.status, 400)
 })
 
+test('POST /api/chat：stream 必须是布尔值', async () => {
+    const res = await fetch(`${base}/api/chat`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ message: '你好', stream: 'yes' }),
+    })
+    assert.equal(res.status, 400)
+    assert.equal(((await res.json()) as any).error, 'stream 必须是布尔值')
+})
+
 test('POST /api/reset：清空后只剩 system 消息，并换新的 sessionId', async () => {
     const before = await getJson('/api/history')
 

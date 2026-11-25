@@ -175,6 +175,10 @@ export function trackEvent(run: ActiveRun, event: AgentEventBody): void {
             // round 是 1-based 且包含 max_rounds 的总结调用，直接用事件里的值
             task.modelCalls = Math.max(task.modelCalls, event.round)
             break
+        case 'model.delta':
+            // 增量只影响页面展示，任务状态仍然是「正在调模型」
+            task.phase = TaskPhase.CallingModel
+            break
         case 'model.end':
             task.phase = event.toolCallCount > 0 ? TaskPhase.RunningTools : TaskPhase.Done
             break

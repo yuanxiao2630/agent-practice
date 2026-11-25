@@ -68,7 +68,9 @@ apps/server-express/
 - 单请求体上限 `BODY_LIMIT`（默认 1 MB），超限 413；
 - 未选工作区时普通对话可用，文件工具会收到「未选择工作区」；
 - 同一时刻只允许一轮对话，运行中切换工具 / 仓库返回 409；
-- SSE 仍以 `data: {...}\n\n` 发送，结尾补 `data: [DONE]`。
+- SSE 仍以 `data: {...}\n\n` 发送，结尾补 `data: [DONE]`；
+- `POST /api/chat` 新增可选 `stream`（默认 `true`）：`false` 时模型一次性返回，
+  事件协议不变，只是不再发送 `model.delta`。
 
 ## 为什么复制了业务层
 
@@ -80,7 +82,7 @@ apps/server-express/
 
 | Method | Path | 说明 |
 | --- | --- | --- |
-| POST | `/api/chat` | 提问，SSE 流式返回 |
+| POST | `/api/chat` | 提问，SSE 返回事件；`stream` 控制模型输出是否逐 token 推送 |
 | POST | `/api/chat/cancel` | 中断当前轮 |
 | GET | `/api/history` | 页面回显用的消息 |
 | GET | `/api/context` | 排查用的完整上下文与任务状态 |

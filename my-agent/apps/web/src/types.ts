@@ -40,6 +40,8 @@ export type Turn = {
     /** 中断原因（用户中断 / 客户端断开） */
     cancelReason?: string
     assistant?: string
+    /** 正在接收 model.delta，气泡里显示闪烁光标 */
+    streaming?: boolean
     error?: string
     snapshots: RoundSnapshot[]
     /** final 事件带回来的完整上下文；老版本后端没有该字段时退化为最后一个 round 快照 */

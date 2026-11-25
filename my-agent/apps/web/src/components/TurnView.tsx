@@ -15,7 +15,9 @@ export default function TurnView({ turn }: { turn: Turn }) {
 
             {turn.steps.length > 0 && <StepList steps={turn.steps} />}
 
-            {turn.assistant && <AssistantBubble text={turn.assistant} />}
+            {turn.assistant && (
+                <AssistantBubble text={turn.assistant} streaming={turn.streaming} />
+            )}
 
             {turn.cancelled && (
                 <div className="msg">

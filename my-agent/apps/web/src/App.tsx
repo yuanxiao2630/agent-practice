@@ -6,6 +6,17 @@ import WorkspaceDialog from './components/WorkspaceDialog.tsx'
 import { useChat } from './hooks/useChat.ts'
 import { useWorkspace } from './hooks/useWorkspace.ts'
 
+const STREAM_PREF_KEY = 'my-agent.stream-output'
+
+/** 默认开启流式；localStorage 不可用时退回默认值，不影响对话 */
+function readStreamPreference(): boolean {
+    try {
+        return window.localStorage.getItem(STREAM_PREF_KEY) !== 'off'
+    } catch {
+        return true
+    }
+}
+
 export default function App() {
     const {
         turns,
@@ -25,7 +36,18 @@ export default function App() {
     } = useWorkspace()
 
     const [pickerOpen, setPickerOpen] = useState(false)
+    const [streamOutput, setStreamOutput] = useState(readStreamPreference)
     const mainRef = useRef<HTMLElement>(null)
+
+    // 记住用户选择：下次打开页面继续沿用，但只在发送那一刻读取
+    const updateStreamOutput = useCallback((next: boolean) => {
+        setStreamOutput(next)
+        try {
+            window.localStorage.setItem(STREAM_PREF_KEY, next ? 'on' : 'off')
+        } catch {
+            /* 隐身模式等禁用 localStorage 的情况，忽略即可 */
+        }
+    }, [])
 
     const openPicker = useCallback(() => {
         if (!busy) setPickerOpen(true)
@@ -70,6 +92,8 @@ export default function App() {
                 busy={busy}
                 workspace={workspace}
                 workspaceLoading={workspaceLoading}
+                streamOutput={streamOutput}
+                onToggleStreamOutput={updateStreamOutput}
                 onOpenWorkspace={openPicker}
                 onReset={reset}
             />
@@ -129,7 +153,7 @@ export default function App() {
                 cancelling={cancelling}
                 hasWorkspace={Boolean(workspace)}
                 onPickWorkspace={openPicker}
-                onSend={send}
+                onSend={(text) => void send(text, { stream: streamOutput })}
                 onCancel={cancel}
             />
 

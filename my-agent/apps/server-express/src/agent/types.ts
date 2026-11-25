@@ -29,4 +29,4 @@ export type {
     EventMeta,
 } from '../../../../shared/events.ts'
 
-export type Emit = (event: AgentEventBody) => void
+export type Emit = (event: AgentEventBody) => void | Promise<void>

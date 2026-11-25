@@ -25,13 +25,18 @@ import { startSse } from '../sse.ts'
 import type { Ctx } from './types.ts'
 
 /**
- * 提问：SSE 流式返回任务生命周期（task/model/tool 事件）。
+ * 提问：SSE 返回任务生命周期（task/model/tool 事件）。
+ * 模型输出是否逐 token 推送由请求体 `stream` 控制，缺省为 true。
  * 同一时刻只允许一轮（单用户本地），靠 isRunning 挡住并发。
  */
 export async function chatRoute({ req, res }: Ctx): Promise<void> {
     const body = await readJsonObject(req)
     const text = String(body['message'] ?? '').trim()
     if (!text) throw new HttpError(400, 'message 不能为空')
+
+    // 不传 stream 时保持流式；显式传 false 才走一次性返回
+    const stream = body['stream'] === undefined ? true : body['stream']
+    if (typeof stream !== 'boolean') throw new HttpError(400, 'stream 必须是布尔值')
     if (isRunning()) throw new HttpError(409, '上一个问题还在处理，请稍等')
 
     // 没选工作区也允许普通对话；文件工具执行时会返回「未选择工作区」给模型
@@ -50,11 +55,15 @@ export async function chatRoute({ req, res }: Ctx): Promise<void> {
             at: new Date().toISOString(),
         }
         trackEvent(run, event)
-        // checkpoint 是恢复依据；写失败就停止，不先发布无法恢复的完成事件。
-        await saveCheckpoint(full.seq)
-        // JSONL 仍是 best-effort，与 checkpoint 不构成事务，也不用于自动重放。
-        appendEvent(full)
-        await flushEventLog()
+        // 流式增量只用于边生成边展示：不落 checkpoint / JSONL，
+        // 否则每个 token 都要写一次盘。恢复依赖 model.end 里的权威全文。
+        if (event.type !== 'model.delta') {
+            // checkpoint 是恢复依据；写失败就停止，不先发布无法恢复的完成事件。
+            await saveCheckpoint(full.seq)
+            // JSONL 仍是 best-effort，与 checkpoint 不构成事务，也不用于自动重放。
+            appendEvent(full)
+            await flushEventLog()
+        }
         sse.send(full)
     }
 
@@ -78,7 +87,13 @@ export async function chatRoute({ req, res }: Ctx): Promise<void> {
             tools: activeTools,
         })
 
-        const result = await runAgent(messages, emit, run.controller.signal, activeTools)
+        const result = await runAgent(
+            messages,
+            emit,
+            run.controller.signal,
+            activeTools,
+            stream,
+        )
 
         finishRun(run, TaskStatus.Completed)
         await emit({

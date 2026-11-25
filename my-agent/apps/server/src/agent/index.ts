@@ -17,8 +17,8 @@ import type { CancelCause, ChatMessage, CompletedReason, Emit } from './types.ts
 export * from './types.ts'
 
 // DeepSeek 的 thinking / reasoning_effort 是 OpenAI 兼容接口的扩展字段，
-// openai SDK 的类型里没有，包一层函数，避免每个调用点都做强转
-type DeepSeekChatParams = OpenAI.ChatCompletionCreateParamsNonStreaming & {
+// openai SDK 的类型里没有，包一层类型，避免每个调用点都做强转
+type DeepSeekChatParams = Omit<OpenAI.ChatCompletionCreateParamsStreaming, 'stream'> & {
     thinking?: { type: 'enabled' | 'disabled' }
     reasoning_effort?: 'low' | 'medium' | 'high'
 }
@@ -30,8 +30,130 @@ const openai = new OpenAI({
     apiKey: DEEPSEEK_API_KEY ?? 'missing-deepseek-api-key',
 })
 
-function chat(params: DeepSeekChatParams, signal?: AbortSignal) {
-    return openai.chat.completions.create(params, { signal })
+/** 流式请求：模型的每个 token 都会经 SSE 立即推给页面 */
+function chatStream(params: DeepSeekChatParams, signal?: AbortSignal) {
+    return openai.chat.completions.create({ ...params, stream: true }, { signal })
+}
+
+/** 非流式请求：等模型整段生成完再一次性返回 */
+function chatOnce(params: DeepSeekChatParams, signal?: AbortSignal) {
+    return openai.chat.completions.create({ ...params, stream: false }, { signal })
+}
+
+type FunctionToolCall = {
+    id: string
+    type: 'function'
+    function: { name: string; arguments: string }
+}
+
+/** 流式的 tool_call 是分片到达的；非流式则直接是完整调用，这里统一形状 */
+type ToolCallDraft =
+    | FunctionToolCall
+    | { id: string; type: 'custom'; custom: { name: string; input: string } }
+
+type CompletionResult = {
+    content: string
+    finishReason: string
+    toolCalls: ToolCallDraft[]
+}
+
+/** 非流式响应里的 tool_calls 已经是完整的，只统一类型，不做聚合 */
+function normalizeToolCalls(
+    calls: NonNullable<OpenAI.ChatCompletionMessage['tool_calls']>,
+): ToolCallDraft[] {
+    return calls.map((call) =>
+        call.type === 'function'
+            ? {
+                  id: call.id,
+                  type: 'function' as const,
+                  function: { name: call.function.name, arguments: call.function.arguments },
+              }
+            : {
+                  id: call.id,
+                  type: 'custom' as const,
+                  custom: { name: call.custom.name, input: call.custom.input },
+              },
+    )
+}
+
+/**
+ * 消费一次流式回复：
+ * - 文本增量立刻 emit（页面可以边生成边渲染）；
+ * - tool_call 的 id / name / arguments 分片在本地拼回完整调用，
+ *   保证进入 messages 的仍然是一条合法、完整的 assistant 消息。
+ */
+async function streamCompletion(
+    params: DeepSeekChatParams,
+    emit: Emit,
+    round: number,
+    signal?: AbortSignal,
+): Promise<CompletionResult> {
+    const stream = await chatStream(params, signal)
+    let content = ''
+    let finishReason = 'unknown'
+    const drafts: FunctionToolCall[] = []
+
+    for await (const chunk of stream) {
+        if (signal?.aborted) throw signal.reason ?? abortError()
+
+        const choice = chunk.choices[0]
+        if (!choice) continue
+        if (choice.finish_reason) finishReason = choice.finish_reason
+
+        const delta = choice.delta
+        const piece = delta?.content
+        if (piece) {
+            content += piece
+            await emit({ type: 'model.delta', round, content: piece })
+        }
+
+        for (const part of delta?.tool_calls ?? []) {
+            const index = part.index ?? drafts.length
+            const draft = (drafts[index] ??= {
+                id: '',
+                type: 'function',
+                function: { name: '', arguments: '' },
+            })
+            if (part.id) draft.id = part.id
+            if (part.function?.name) draft.function.name += part.function.name
+            if (part.function?.arguments) draft.function.arguments += part.function.arguments
+        }
+    }
+
+    const toolCalls = drafts.filter((draft) => draft.id || draft.function.name)
+    // 个别兼容接口最后一片不带 finish_reason，按实际收到的内容兜底
+    if (finishReason === 'unknown' && toolCalls.length > 0) finishReason = 'tool_calls'
+
+    return { content, finishReason, toolCalls }
+}
+
+/** 非流式回复：不产生 model.delta，等内容全部到齐后一次返回 */
+async function completeOnce(
+    params: DeepSeekChatParams,
+    signal?: AbortSignal,
+): Promise<CompletionResult> {
+    const completion = await chatOnce(params, signal)
+    const choice = completion.choices[0]
+    if (!choice) throw new Error('模型返回了空的 choices')
+
+    return {
+        content: choice.message.content ?? '',
+        finishReason: choice.finish_reason ?? 'unknown',
+        toolCalls: normalizeToolCalls(choice.message.tool_calls ?? []),
+    }
+}
+
+/** 按调用方选择的模式走流式或非流式，后面的工具循环对两者完全一致 */
+function complete(
+    params: DeepSeekChatParams,
+    emit: Emit,
+    round: number,
+    signal: AbortSignal | undefined,
+    stream: boolean,
+): Promise<CompletionResult> {
+    return stream
+        ? streamCompletion(params, emit, round, signal)
+        : completeOnce(params, signal)
 }
 
 export function createMessages(workspace: Workspace | null = getWorkspace()): ChatMessage[] {
@@ -106,6 +228,7 @@ export async function runAgent(
     emit: Emit = () => {},
     signal?: AbortSignal,
     activeTools: ToolDefinition[] = enabledToolDefinitions(),
+    stream = true,
 ): Promise<AgentResult> {
     let count = 1
     let modelCalls = 0
@@ -137,27 +260,25 @@ export async function runAgent(
             modelCalls++
             const startedAt = Date.now()
 
-            const finalCompletion = await chat(
+            const { content, finishReason } = await complete(
                 {
                     messages: summaryMessages,
                     model: MODEL,
                     thinking: { type: 'enabled' },
                     reasoning_effort: 'high',
-                    stream: false,
                 },
+                emit,
+                count,
                 signal,
+                stream,
             )
-
-            const choice = finalCompletion.choices[0]
-            if (!choice) throw new Error('模型返回了空的 choices')
             if (signal?.aborted) throw signal.reason ?? abortError()
 
-            const content = choice.message.content ?? ''
             messages.push({ role: 'assistant', content })
             await emit({
                 type: 'model.end',
                 round: count,
-                finishReason: choice.finish_reason ?? 'unknown',
+                finishReason,
                 content,
                 toolCallCount: 0,
                 durationMs: Date.now() - startedAt,
@@ -171,47 +292,40 @@ export async function runAgent(
         modelCalls++
         const startedAt = Date.now()
 
-        const completion = await chat(
+        const { content: modelContent, finishReason, toolCalls } = await complete(
             {
                 messages,
                 ...toolsParam,
                 model: MODEL,
                 thinking: { type: 'enabled' },
                 reasoning_effort: 'high',
-                stream: false,
             },
+            emit,
+            count,
             signal,
+            stream,
         )
-
-        // message / finish_reason 都在 choices[0] 里，choices 是数组
-        const choice = completion.choices[0]
-        if (!choice) throw new Error('模型返回了空的 choices')
-
-        const message = choice.message
-        const finishReason = choice.finish_reason ?? 'unknown'
 
         if (signal?.aborted) throw signal.reason ?? abortError()
 
-        const toolCalls = message.tool_calls ?? []
         // 先提交模型回复，再报告 model.end；checkpoint 才能记录待执行工具。
         messages.push({
             role: 'assistant',
-            content: message.content ?? '',
+            content: modelContent,
             ...(finishReason === 'tool_calls' && toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
         })
         await emit({
             type: 'model.end',
             round: count,
             finishReason,
-            content: message.content ?? '',
+            content: modelContent,
             toolCallCount: toolCalls.length,
             durationMs: Date.now() - startedAt,
         })
 
         if (finishReason === 'tool_calls') {
             if (toolCalls.length === 0) {
-                const content = message.content ?? ''
-                return { content, rounds: modelCalls, reason: 'empty_tool_calls' }
+                return { content: modelContent, rounds: modelCalls, reason: 'empty_tool_calls' }
             }
 
             for (const item of toolCalls) {
@@ -221,8 +335,10 @@ export async function runAgent(
                 // 类型不支持 / 参数解析失败 / 工具抛错都不能跳过，
                 // 否则回执数量与 tool_calls 不匹配，下一次请求直接 400
                 const toolCallId = item.id
-                const toolName = item.type === 'function' ? item.function.name : `(${item.type})`
-                const args = item.type === 'function' ? safeParse(item.function.arguments) : {}
+                const toolName = item.type === 'function' ? item.function.name : item.custom.name
+                const args = safeParse(
+                    item.type === 'function' ? item.function.arguments : item.custom.input,
+                )
                 await emit({ type: 'tool.start', round: count, toolCallId, name: toolName, args })
                 if (signal?.aborted) throw signal.reason ?? abortError()
 
@@ -276,7 +392,7 @@ export async function runAgent(
         }
 
         // stop / length / content_filter 等：结束本轮，把模型的话当作最终回答
-        const content = message.content ?? ''
+        const content = modelContent
 
         if (finishReason !== 'stop') console.warn('模型没有调用工具，finish_reason =', finishReason)
 

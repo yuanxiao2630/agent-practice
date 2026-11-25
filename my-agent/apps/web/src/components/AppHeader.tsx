@@ -6,6 +6,8 @@ export default function AppHeader({
     busy,
     workspace,
     workspaceLoading,
+    streamOutput,
+    onToggleStreamOutput,
     onOpenWorkspace,
     onReset,
 }: {
@@ -13,6 +15,8 @@ export default function AppHeader({
     busy: boolean
     workspace: WorkspaceInfo | null
     workspaceLoading: boolean
+    streamOutput: boolean
+    onToggleStreamOutput: (next: boolean) => void
     onOpenWorkspace: () => void
     onReset: () => void
 }) {
@@ -25,6 +29,26 @@ export default function AppHeader({
                 {status}
             </span>
             <span className="spacer" />
+
+            <div className="stream-mode">
+                <span className="stream-mode-label">流式输出</span>
+                <button
+                    type="button"
+                    role="switch"
+                    aria-checked={streamOutput}
+                    aria-label={streamOutput ? '关闭流式输出' : '开启流式输出'}
+                    title={
+                        streamOutput
+                            ? '当前逐字显示回答；点击改为等完整回答一次性显示'
+                            : '当前等完整回答一次性显示；点击改回逐字流式显示'
+                    }
+                    className={`switch small ${streamOutput ? 'on' : ''}`}
+                    disabled={locked}
+                    onClick={() => onToggleStreamOutput(!streamOutput)}
+                >
+                    <span className="knob" aria-hidden="true" />
+                </button>
+            </div>
 
             <div className="workspace-widget">
                 {workspace && (

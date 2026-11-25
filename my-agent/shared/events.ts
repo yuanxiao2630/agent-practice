@@ -11,6 +11,9 @@
  *   - 事件是「已经发生的事实」，终止事件三选一、恰好一次，并且是最后一个业务事件。
  *   - `taskId` / `seq` / `at` 由传输层统一补，agent 只产出 body。
  *   - 快照只放在检查点：`model.start` 和终止事件带 messages，其余事件只带增量。
+ *   - `model.delta` 只在请求体 `stream: true`（默认）时出现，是瞬时事件：
+ *     只用于边生成边展示，不写 checkpoint / JSONL；
+ *     `model.end` 里的 `content` 才是这一轮的权威全文。
  */
 
 export type ToolCall =
@@ -64,6 +67,12 @@ export type AgentEventBody =
           type: 'model.start'
           round: number // 从 1 开始，第几次模型调用
           messages: ChatMessage[] // 本次请求的上下文快照
+      }
+    // 流式增量：一段新生成的文本，按到达顺序拼接即为 model.end.content
+    | {
+          type: 'model.delta'
+          round: number
+          content: string
       }
     | {
           type: 'model.end'

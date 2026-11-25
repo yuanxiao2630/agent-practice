@@ -43,6 +43,7 @@ function markCancelled(turn: Turn, reason?: string): Turn {
     return {
         ...turn,
         cancelled: true,
+        streaming: false,
         cancelReason: reason ?? turn.cancelReason,
         steps: turn.steps.map((s) =>
             s.status === 'pending' ? { ...s, status: 'cancelled' as const, note: '已中断' } : s,
@@ -93,7 +94,7 @@ export function useChat() {
     }, [])
 
     const send = useCallback(
-        async (text: string) => {
+        async (text: string, options?: { stream?: boolean }) => {
             const content = text.trim()
             if (!content || busyRef.current) return
 
@@ -110,6 +111,7 @@ export function useChat() {
             try {
                 await streamChat(
                     content,
+                    { stream: options?.stream ?? true },
                     (event) => {
                         switch (event.type) {
                             case 'task.start':
@@ -120,6 +122,9 @@ export function useChat() {
                                 setStatus(`第 ${event.round} 轮`)
                                 patchTurn(id, (t) => ({
                                     ...t,
+                                    // 新一轮开始：上一轮的临时文本（比如「我先看看文件」）让位给本轮输出
+                                    assistant: '',
+                                    streaming: false,
                                     // 同一轮可能重发，按 round 覆盖而不是无限追加
                                     snapshots: [
                                         ...t.snapshots.filter((s) => s.round !== event.round),
@@ -128,10 +133,20 @@ export function useChat() {
                                 }))
                                 break
 
+                            case 'model.delta':
+                                setStatus('生成中…')
+                                patchTurn(id, (t) => ({
+                                    ...t,
+                                    assistant: (t.assistant ?? '') + event.content,
+                                    streaming: true,
+                                }))
+                                break
+
                             case 'model.end':
                                 setStatus(
                                     event.toolCallCount > 0 ? '执行工具…' : '整理回答…',
                                 )
+                                patchTurn(id, (t) => ({ ...t, streaming: false }))
                                 break
 
                             case 'tool.start': {
@@ -176,6 +191,7 @@ export function useChat() {
                                 patchTurn(id, (t) => ({
                                     ...t,
                                     assistant: event.content || '（模型没有返回内容）',
+                                    streaming: false,
                                     finalMessages: event.messages,
                                 }))
                                 setStatus(EMPTY)
@@ -190,6 +206,7 @@ export function useChat() {
                                 patchTurn(id, (t) => ({
                                     ...t,
                                     error: event.error,
+                                    streaming: false,
                                     steps: t.steps.map((s) =>
                                         s.status === 'pending'
                                             ? { ...s, status: 'failed' as const, note: '未完成' }
@@ -221,7 +238,9 @@ export function useChat() {
                 busyRef.current = false
                 abortRef.current = null
                 setBusy(false)
-                setStatus((s) => (s === '思考中…' || s === EMPTY ? EMPTY : s))
+                setStatus((s) =>
+                    s === '思考中…' || s === '生成中…' || s === EMPTY ? EMPTY : s,
+                )
             }
         },
         [patchTurn],
